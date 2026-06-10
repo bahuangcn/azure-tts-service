@@ -1,0 +1,16 @@
+[Unit]
+Description=Azure TTS Service
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/azure-tts-service
+Environment="PATH=/opt/azure-tts-service/venv/bin"
+EnvironmentFile=/opt/azure-tts-service/.env
+ExecStart=/opt/azure-tts-service/venv/bin/uvicorn app:app --host 0.0.0.0 --port 10102
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
