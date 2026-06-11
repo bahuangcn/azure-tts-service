@@ -10,6 +10,7 @@
   - [POST /azure_api/tts — 提交合成任务](#post-azure_apitts--提交合成任务)
   - [GET /azure_api/tts/{task_id} — 查询任务详情](#get-azure_apittstask_id--查询任务详情)
   - [GET /azure_api/tts/audio/{task_id} — 下载音频文件](#get-azure_apittsaudiotask_id--下载音频文件)
+  - [GET /azure_api/tts/{task_id}/timing — 下载词级时间戳文件](#get-azure_apittstask_idtiming--下载词级时间戳文件)
   - [GET /azure_api/tts — 任务列表](#get-azure_apitts--任务列表)
   - [DELETE /azure_api/tts/{task_id} — 删除任务](#delete-azure_apittstask_id--删除任务)
   - [GET /azure_api/health — 健康检查](#get-azure_apihealth--健康检查)
@@ -47,7 +48,7 @@ pending ──→ processing ──→ completed
 |------|------|-------------------|
 | `pending` | 已入队，等待处理 | — |
 | `processing` | 正在合成中（batch 模式下 `azure_status` 字段指示 Azure 端状态） | `azure_status` |
-| `completed` | 合成成功 | `audio_url`, `word_timings`, `total_ms`, `audio_file` |
+| `completed` | 合成成功 | `audio_url`, `timing_url`, `word_timings`, `total_ms`, `audio_file` |
 | `failed` | 合成失败 | `error` |
 
 **Batch 模式子状态**（`azure_status` 字段，仅在 `mode=batch` 且 `status=processing` 时出现）：
@@ -146,6 +147,7 @@ NotStarted → Running → Succeeded
   "mode": "sdk",
   "audio_file": "tts_a1b2c3d4e5f6.mp3",
   "audio_url": "/azure_api/tts/audio/tts_a1b2c3d4e5f6",
+  "timing_url": "/azure_api/tts/tts_a1b2c3d4e5f6/timing",
   "word_timings": [
     {"text": "你好", "start_ms": 50, "end_ms": 187},
     {"text": "世界", "start_ms": 187, "end_ms": 350}
@@ -169,6 +171,7 @@ NotStarted → Running → Succeeded
 | `mode` | `string` | 总是 | `sdk` 或 `batch` |
 | `audio_file` | `string\|null` | completed 时 | 音频文件名（不含目录路径） |
 | `audio_url` | `string\|null` | completed 时 | 音频下载相对路径 `/azure_api/tts/audio/{task_id}` |
+| `timing_url` | `string\|null` | completed 时 | 词级时间戳下载相对路径 `/azure_api/tts/{task_id}/timing` |
 | `word_timings` | `array\|null` | completed 时 | 词级时间戳，见下方子表 |
 | `total_ms` | `int\|null` | completed 时 | 音频总时长（毫秒） |
 | `synthesis_id` | `string\|null` | batch 模式 | Azure Batch API 的合成 ID |
@@ -211,6 +214,39 @@ NotStarted → Running → Succeeded
 | 状态码 | 说明 |
 |--------|------|
 | `404` | 任务不存在 / 尚未完成 (`audio_file` 为 NULL) / 磁盘文件不存在 |
+
+---
+
+### GET /azure_api/tts/{task_id}/timing — 下载词级时间戳文件
+
+**路径参数**:
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `task_id` | `string` | 已完成任务的任务 ID |
+
+**响应** (200):
+
+- `Content-Type: application/json`
+- `Content-Disposition: attachment; filename="{task_id}_timing.json"`
+- JSON 数组，每个元素为一个词的起止时间
+
+**响应体示例**:
+
+```json
+[
+  {"text": "你好", "start_ms": 50, "end_ms": 187},
+  {"text": "世界", "start_ms": 187, "end_ms": 350}
+]
+```
+
+**说明**: 与音频下载不同，timing 数据来自数据库 JSON 列而非磁盘文件。响应直接返回 DB 中已存储的 JSON 字符串，带有 `Content-Disposition: attachment` 头以触发浏览器下载。
+
+**错误**:
+
+| 状态码 | 说明 |
+|--------|------|
+| `404` | 任务不存在 / 尚未完成 (`word_timings` 为 NULL) |
 
 ---
 
@@ -341,6 +377,7 @@ NotStarted → Running → Succeeded
 | `400` | `POST /azure_api/tts` | `text` 字段为空或全空白 |
 | `404` | `GET /azure_api/tts/{task_id}` | 任务 ID 不存在 |
 | `404` | `GET /azure_api/tts/audio/{task_id}` | 音频未就绪或任务不存在 |
+| `404` | `GET /azure_api/tts/{task_id}/timing` | 时间戳未就绪或任务不存在 |
 | `404` | `DELETE /azure_api/tts/{task_id}` | 任务 ID 不存在 |
 
 ### 任务级错误（`status=failed`）
@@ -383,7 +420,10 @@ curl -s http://localhost:8002/azure_api/tts/$TASK_ID | jq .
 # 4. 下载音频
 curl -o output.mp3 http://localhost:8002/azure_api/tts/audio/$TASK_ID
 
-# 5. 健康检查
+# 5. 下载词级时间戳
+curl -o timing.json http://localhost:8002/azure_api/tts/$TASK_ID/timing
+
+# 6. 健康检查
 curl -s http://localhost:8002/azure_api/health | jq .
 ```
 
@@ -426,6 +466,12 @@ if data["status"] == "completed":
     with open(f"{task_id}.mp3", "wb") as f:
         f.write(audio.content)
     print(f"音频已保存: {task_id}.mp3")
+
+    # 下载词级时间戳
+    timing = requests.get(f"{BASE}/azure_api/tts/{task_id}/timing")
+    with open(f"{task_id}_timing.json", "wb") as f:
+        f.write(timing.content)
+    print(f"时间戳已保存: {task_id}_timing.json")
 else:
     print(f"合成失败: {data['error']}")
 ```
@@ -462,6 +508,7 @@ async function synthesize(text, voice = "zh-CN-XiaochenNeural", rate = "+20%") {
       totalMs: task.total_ms,
       wordTimings: task.word_timings,
       audioUrl: `${BASE}${task.audio_url}`,
+      timingUrl: `${BASE}${task.timing_url}`,
     };
   } else {
     throw new Error(`合成失败: ${task.error}`);

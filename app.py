@@ -3,12 +3,13 @@
 Azure TTS Service — 异步词级时间戳 TTS 微服务。
 
 功能：
-  - POST /azure_api/tts           提交文本合成任务
-  - GET  /azure_api/tts/{id}      查询任务状态（含词级时间戳）
-  - GET  /azure_api/tts/audio/{id} 下载合成 MP3
-  - GET  /azure_api/tts           任务列表
-  - DELETE /azure_api/tts/{id}    删除任务
-  - GET  /azure_api/health        健康检查
+  - POST /azure_api/tts                提交文本合成任务
+  - GET  /azure_api/tts/{id}           查询任务状态（含词级时间戳）
+  - GET  /azure_api/tts/audio/{id}     下载合成 MP3
+  - GET  /azure_api/tts/{id}/timing    下载词级时间戳 JSON
+  - GET  /azure_api/tts                任务列表
+  - DELETE /azure_api/tts/{id}         删除任务
+  - GET  /azure_api/health             健康检查
 
 模块架构：
   config.py    — 配置（路径、凭证、默认值）

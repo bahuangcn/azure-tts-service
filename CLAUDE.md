@@ -57,8 +57,9 @@ HTTP 请求 → routes.py (FastAPI) → 任务写入 SQLite → 队列分发
    d. 收集 word_boundary 回调 → 计算词级时间戳
    e. mutagen 读取 MP3 总时长
    f. UPDATE status=completed, audio_file, word_timings, total_ms
-5. GET /azure_api/tts/{task_id} → 返回状态 + word_timings + audio_url
+5. GET /azure_api/tts/{task_id} → 返回状态 + word_timings + audio_url + timing_url
 6. GET /azure_api/tts/audio/{task_id} → FileResponse 返回 MP3
+   GET /azure_api/tts/{task_id}/timing → Response 返回词级时间戳 JSON
 ```
 
 ## 环境变量
@@ -115,6 +116,9 @@ curl http://localhost:8002/azure_api/tts/{task_id}
 
 # 下载音频
 curl -o output.mp3 http://localhost:8002/azure_api/tts/audio/{task_id}
+
+# 下载词级时间戳
+curl -o timing.json http://localhost:8002/azure_api/tts/{task_id}/timing
 
 # 查看任务列表
 curl http://localhost:8002/azure_api/tts

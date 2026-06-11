@@ -12,7 +12,7 @@ import sqlite3
 from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Body
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 
 from config import DEFAULT_VOICE, DEFAULT_RATE, AUDIO_DIR
 from database import get_db
@@ -119,9 +119,10 @@ def get_task(task_id: str):
     if d.get("word_timings"):
         d["word_timings"] = json.loads(d["word_timings"])
 
-    # 完成的任务附加音频下载 URL（相对路径，用 task_id 查询，非 audio_file）
+    # 完成的任务附加下载 URL（相对路径）
     if d["status"] == "completed":
         d["audio_url"] = f"/azure_api/tts/audio/{d['task_id']}"
+        d["timing_url"] = f"/azure_api/tts/{d['task_id']}/timing"
 
     return d
 
@@ -153,6 +154,37 @@ def download_audio(task_id: str):
         raise HTTPException(404, "audio file missing on disk")
 
     return FileResponse(str(filepath), media_type="audio/mpeg")
+
+
+# ── 端点：下载词级时间戳文件 ──────────────────────────────────────────────────
+@router.get("/tts/{task_id}/timing")
+def download_timing(task_id: str):
+    """
+    下载已完成任务的词级时间戳 JSON 文件。
+
+    返回：
+      200  application/json，Content-Disposition: attachment
+      404  任务不存在 / 未完成（word_timings 为 NULL）
+
+    与 audio 下载不同：timing 数据来自 DB JSON 列而非磁盘文件，
+    因此不依赖 FileResponse，直接构造 Response 返回。
+    """
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT word_timings FROM tasks WHERE task_id = ?", (task_id,)
+        ).fetchone()
+
+    # 任务不存在 或 尚未完成（word_timings 为 NULL）
+    if not row or not row["word_timings"]:
+        raise HTTPException(404, "timing not found")
+
+    return Response(
+        content=row["word_timings"],
+        media_type="application/json",
+        headers={
+            "Content-Disposition": f'attachment; filename="{task_id}_timing.json"'
+        },
+    )
 
 
 # ── 端点：任务列表 ──────────────────────────────────────────────────────────
