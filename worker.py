@@ -15,11 +15,13 @@
                                   异常 → failed（含 error 信息）
 """
 import json
+import os
 import queue
 import threading
+import traceback
 
 import azure.cognitiveservices.speech as speechsdk
-import mutagen.mp3
+import mutagen
 
 from config import SPEECH_KEY, SPEECH_REGION, AUDIO_DIR
 from database import get_db
@@ -116,33 +118,25 @@ def _synthesize(task_id: str):
     # ── 2. 更新状态 ────────────────────────────────────────────────────
     _mark_status(task_id, "processing")
 
-    # ── 3. 构建 SSML ───────────────────────────────────────────────────
-    # SSML（Speech Synthesis Markup Language）是 Azure TTS 的 XML 控制语言
-    #   <voice>     — 指定发音人
-    #   <prosody>   — 控制语速（rate）、音调、音量
-    #   <mstts:viseme type='word_boundary'/> — 启用词边界事件（回调中获取时间戳）
     voice = task["voice"]
     rate = task["rate"]
     text = task["text"]
-    ssml = (
-        f"<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' "
-        f"xmlns:mstts='http://www.w3.org/2001/mstts' xml:lang='zh-CN'>"
-        f"<voice name='{voice}'>"
-        f"<mstts:viseme type='word_boundary'/>"
-        f"<prosody rate='{rate}'>"
-        f"{text}"
-        f"</prosody>"
-        f"</voice>"
-        f"</speak>"
-    )
 
     # ── 4. 配置 Azure Speech SDK ───────────────────────────────────────
+    # 注意：不用 SSML，因为 Azure SDK 已知 Bug —— synthesis_word_boundary
+    # 事件在 speak_ssml_async 下不触发，只有 speak_text_async 才触发。
+    # voice / rate 通过 SpeechConfig 设置，不走 SSML。
     speech_config = speechsdk.SpeechConfig(
         subscription=SPEECH_KEY, region=SPEECH_REGION
     )
+    speech_config.speech_synthesis_voice_name = voice
     # 输出格式：48kHz / 192kbps / 单声道 / MP3
     speech_config.speech_synthesis_output_format = (
         speechsdk.SpeechSynthesisOutputFormat.Audio48Khz192KBitRateMonoMp3
+    )
+    # 语速（与 SSML <prosody rate="..."> 等效）
+    speech_config.set_property(
+        speechsdk.PropertyId.SpeechSynthesisRequest_Rate, rate
     )
 
     audio_file = f"{task_id}.mp3"
@@ -155,19 +149,35 @@ def _synthesize(task_id: str):
 
     # ── 5. 注册词边界回调 ──────────────────────────────────────────────
     # Azure SDK 在合成每个词时触发该事件，我们在闭包中实时收集词文本和起始偏移量。
-    # evt.audio_offset.ticks 单位是 100ns tick，除以 10000 得到毫秒。
+    # evt.audio_offset 是 int，单位 100ns tick → // 10000 得到毫秒
+    # evt.duration 是 datetime.timedelta → .total_seconds() * 1000 得到毫秒
     timings = []
 
     def _on_word_boundary(evt: speechsdk.SpeechSynthesisWordBoundaryEventArgs):
-        timings.append({
+        # audio_offset 是 int（100ns 单位），直接除以 10000 得毫秒
+        offset_ms = int(evt.audio_offset) // 10000
+        # duration 是 timedelta，取毫秒
+        try:
+            duration_ms = int(evt.duration.total_seconds() * 1000)
+        except Exception:
+            duration_ms = 0
+            print(f"[WARN] word_boundary duration 获取失败: {traceback.format_exc()}")
+
+        entry = {
             "text": evt.text,
-            "offset_ms": evt.audio_offset.ticks // 10000,
-        })
+            "offset_ms": offset_ms,
+            "duration_ms": duration_ms,
+        }
+        timings.append(entry)
+        print(f"[DEBUG] word_boundary: text=\"{evt.text}\" offset_ms={offset_ms} duration_ms={duration_ms}")
 
     synthesizer.synthesis_word_boundary.connect(_on_word_boundary)
+    print(f"[DEBUG] word_boundary 回调已注册")
 
     # ── 6. 执行合成（阻塞等待完成）─────────────────────────────────────
-    result = synthesizer.speak_ssml_async(ssml).get()
+    # 用 speak_text_async 而非 speak_ssml_async——SSML 下 word_boundary 事件不触发（Azure SDK 已知 Bug）
+    result = synthesizer.speak_text_async(text).get()
+    print(f"[DEBUG] 合成完成, reason={result.reason}, timings 数量={len(timings)}")
 
     # 检查合成结果：失败时抛异常 → 外层捕获 → 标记 failed
     if result.reason != speechsdk.ResultReason.SynthesizingAudioCompleted:
@@ -177,12 +187,29 @@ def _synthesize(task_id: str):
         )
 
     # ── 7. 读取音频总时长 ──────────────────────────────────────────────
-    # 使用 mutagen 解析 MP3 文件头获取时长，用于计算最后一个词的 end_ms
-    try:
-        audio = mutagen.mp3.MP3(audio_path)
-        total_ms = int(audio.info.length * 1000)
-    except Exception:
-        total_ms = None
+    # 使用 mutagen.File() 自动检测格式（WAV / MP3 均可），获取文件总时长
+    # 注意：macOS 上 Azure SDK 不支持 MP3 编码，配置 MP3 输出实际得到 WAV 文件
+    total_ms = None
+    file_size = os.path.getsize(audio_path)
+    if file_size > 0:
+        try:
+            audio = mutagen.File(audio_path)
+            if audio is not None and hasattr(audio.info, "length"):
+                total_ms = int(audio.info.length * 1000)
+        except Exception:
+            print(f"[WARN] mutagen 解析音频时长失败: {traceback.format_exc()}")
+    else:
+        print(f"[WARN] 音频文件为空（{file_size} bytes），Azure SDK 未写入数据")
+
+    # mutagen 解析失败 或 timings 为空时，用词边界时间戳推算
+    if total_ms is None and timings:
+        last = timings[-1]
+        # 优先用回调中的 duration，否则取前一个词的持续时长作为估算
+        fallback_dur = last.get("duration_ms") or (
+            (timings[-1]["offset_ms"] - timings[-2]["offset_ms"])
+            if len(timings) >= 2 else 500
+        )
+        total_ms = last["offset_ms"] + fallback_dur
 
     # ── 8. 计算词级时间戳 ──────────────────────────────────────────────
     # 每个词的 end_ms = 下一个词的 start_ms
@@ -202,10 +229,12 @@ def _synthesize(task_id: str):
 
     # ── 9. 回写完成状态 ────────────────────────────────────────────────
     # word_timings 以 JSON 字符串存入（ensure_ascii=False 保留中文原文）
+    wt_json = json.dumps(word_timings, ensure_ascii=False)
+    print(f"[DEBUG] 写入 DB, word_timings={wt_json}, total_ms={total_ms}")
     _mark_status(
         task_id,
         "completed",
         audio_file=audio_file,
-        word_timings=json.dumps(word_timings, ensure_ascii=False),
+        word_timings=wt_json,
         total_ms=total_ms,
     )

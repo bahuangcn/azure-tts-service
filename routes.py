@@ -6,6 +6,7 @@ FastAPI 路由定义：TTS 任务的 CRUD + 音频下载 + 健康检查。
   - app.py 通过 app.include_router(router) 注册所有路由
 """
 import json
+import traceback
 import uuid
 import sqlite3
 from datetime import datetime
@@ -108,9 +109,9 @@ def get_task(task_id: str):
     if d.get("word_timings"):
         d["word_timings"] = json.loads(d["word_timings"])
 
-    # 完成的任务附加音频下载 URL（相对路径）
+    # 完成的任务附加音频下载 URL（相对路径，用 task_id 查询，非 audio_file）
     if d["status"] == "completed":
-        d["audio_url"] = f"/tts/audio/{d['audio_file']}"
+        d["audio_url"] = f"/tts/audio/{d['task_id']}"
 
     return d
 
@@ -190,7 +191,7 @@ def delete_task(task_id: str):
             try:
                 (AUDIO_DIR / row["audio_file"]).unlink(missing_ok=True)
             except OSError:
-                pass                        # 文件已不存在或其他 IO 错误 → 忽略
+                print(f"[WARN] 删除音频文件失败: {traceback.format_exc()}")
 
         # 删除数据库记录
         conn.execute("DELETE FROM tasks WHERE task_id = ?", (task_id,))

@@ -25,6 +25,8 @@ Azure TTS Service — 异步词级时间戳 TTS 微服务。
 import threading
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from config import MAX_QUEUE_WORKERS
 from database import init_db
@@ -34,8 +36,19 @@ from worker import _worker
 # ── FastAPI 应用实例 ──────────────────────────────────────────────────────
 app = FastAPI(title="Azure TTS Service")
 
+# CORS 跨域：允许浏览器从任意来源调用 API
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 # 注册路由（来自 routes.py 的 APIRouter）
 app.include_router(router)
+
+# 静态文件托管：前端页面（挂载在 API 路由之后，避免拦截 /tts 等路径）
+app.mount("/", StaticFiles(directory="static", html=True), name="static")
 
 
 # ── 启动逻辑 ───────────────────────────────────────────────────────────────

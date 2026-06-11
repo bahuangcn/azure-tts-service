@@ -11,12 +11,13 @@ import os
 from pathlib import Path
 
 # ── 文件路径 ───────────────────────────────────────────────────────────────
+# 可通过环境变量 TTS_AUDIO_DIR / TTS_DB_PATH 覆盖（本地开发时使用项目目录）
 # 合成音频输出目录（不存在自动创建）
-AUDIO_DIR = Path("/opt/azure-tts-service/audio")
+AUDIO_DIR = Path(os.environ.get("TTS_AUDIO_DIR", "/opt/azure-tts-service/audio"))
 AUDIO_DIR.mkdir(exist_ok=True)
 
 # SQLite 任务数据库
-DB_PATH = Path("/opt/azure-tts-service/tasks.db")
+DB_PATH = Path(os.environ.get("TTS_DB_PATH", "/opt/azure-tts-service/tasks.db"))
 
 # ── 运行时配置 ─────────────────────────────────────────────────────────────
 # 后台合成线程数，可通过 TTS_MAX_WORKERS 环境变量覆盖
