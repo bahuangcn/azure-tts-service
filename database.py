@@ -46,6 +46,24 @@ def init_db():
         )
     """)
     conn.commit()
+
+    # ── 迁移：为 batch synthesis 增加列（幂等，已存在则跳过）──────────────
+    migrations = [
+        ("mode",          "TEXT NOT NULL DEFAULT 'sdk'"),
+        ("synthesis_id",  "TEXT"),
+        ("azure_status",  "TEXT"),
+        ("result_url",    "TEXT"),
+    ]
+    for col, col_def in migrations:
+        try:
+            conn.execute(f"ALTER TABLE tasks ADD COLUMN {col} {col_def}")
+        except sqlite3.OperationalError:
+            pass  # 列已存在
+
+    # 存量数据回填：确保现有行 mode = 'sdk'
+    conn.execute("UPDATE tasks SET mode = 'sdk' WHERE mode IS NULL")
+    conn.commit()
+
     return conn
 
 

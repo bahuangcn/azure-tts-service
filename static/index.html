@@ -1,0 +1,884 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Azure TTS 语音合成</title>
+    <style>
+        /* ============================================================
+           CSS Reset & 基础变量
+           ============================================================ */
+        :root {
+            --primary: #4f46e5;
+            --primary-hover: #4338ca;
+            --success: #059669;
+            --danger: #dc2626;
+            --warning: #d97706;
+            --gray-50: #f9fafb;
+            --gray-100: #f3f4f6;
+            --gray-200: #e5e7eb;
+            --gray-300: #d1d5db;
+            --gray-400: #9ca3af;
+            --gray-500: #6b7280;
+            --gray-600: #4b5563;
+            --gray-700: #374151;
+            --gray-800: #1f2937;
+            --gray-900: #111827;
+            --radius: 8px;
+            --shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
+            --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+            --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+        }
+
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+                         "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", sans-serif;
+            background: var(--gray-100);
+            color: var(--gray-800);
+            min-height: 100vh;
+            line-height: 1.6;
+        }
+
+        /* ============================================================
+           头部导航
+           ============================================================ */
+        .header {
+            background: linear-gradient(135deg, var(--primary), #7c3aed);
+            color: #fff;
+            padding: 20px 32px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            box-shadow: var(--shadow-md);
+        }
+        .header .logo {
+            width: 36px; height: 36px;
+            background: rgba(255,255,255,0.2);
+            border-radius: var(--radius);
+            display: flex; align-items: center; justify-content: center;
+            font-size: 20px;
+        }
+        .header h1 { font-size: 20px; font-weight: 600; letter-spacing: -0.3px; }
+        .header .badge {
+            font-size: 12px;
+            background: rgba(255,255,255,0.2);
+            padding: 2px 10px;
+            border-radius: 99px;
+            margin-left: auto;
+        }
+
+        /* ============================================================
+           主体布局
+           ============================================================ */
+        .main {
+            display: grid;
+            grid-template-columns: 420px 1fr;
+            gap: 24px;
+            padding: 24px 32px;
+            max-width: 1440px;
+            margin: 0 auto;
+            min-height: calc(100vh - 80px);
+        }
+
+        @media (max-width: 900px) {
+            .main { grid-template-columns: 1fr; }
+        }
+
+        /* ============================================================
+           卡片组件
+           ============================================================ */
+        .card {
+            background: #fff;
+            border-radius: var(--radius);
+            box-shadow: var(--shadow);
+            padding: 24px;
+        }
+        .card + .card { margin-top: 20px; }
+        .card-title {
+            font-size: 15px;
+            font-weight: 600;
+            color: var(--gray-900);
+            margin-bottom: 16px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid var(--gray-200);
+            display: flex; align-items: center; gap: 8px;
+        }
+        .card-title .icon { font-size: 18px; }
+
+        /* ============================================================
+           表单元素
+           ============================================================ */
+        .form-group { margin-bottom: 16px; }
+        .form-group label {
+            display: block;
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--gray-700);
+            margin-bottom: 6px;
+        }
+        .form-group label .required { color: var(--danger); margin-left: 2px; }
+
+        textarea, input[type="text"], select {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid var(--gray-300);
+            border-radius: var(--radius);
+            font-size: 14px;
+            font-family: inherit;
+            transition: border-color 0.15s, box-shadow 0.15s;
+            background: #fff;
+        }
+        textarea:focus, input:focus, select:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgb(79 70 229 / 0.1);
+        }
+        textarea { resize: vertical; min-height: 120px; }
+
+        .voice-row { display: flex; gap: 8px; }
+        .voice-row select { flex: 1; }
+        .voice-row input { width: 140px; flex-shrink: 0; }
+
+        .rate-row { display: flex; gap: 8px; align-items: center; }
+        .rate-row input { flex: 1; }
+        .rate-presets { display: flex; gap: 4px; }
+        .rate-presets button {
+            font-size: 12px;
+            padding: 4px 10px;
+            border: 1px solid var(--gray-300);
+            background: #fff;
+            border-radius: 4px;
+            cursor: pointer;
+            color: var(--gray-600);
+            transition: all 0.15s;
+            white-space: nowrap;
+        }
+        .rate-presets button:hover {
+            border-color: var(--primary);
+            color: var(--primary);
+            background: rgb(79 70 229 / 0.05);
+        }
+
+        .btn {
+            display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+            padding: 10px 20px;
+            font-size: 14px; font-weight: 600;
+            border: none; border-radius: var(--radius);
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+        .btn-primary {
+            background: var(--primary); color: #fff;
+            width: 100%;
+        }
+        .btn-primary:hover { background: var(--primary-hover); }
+        .btn-primary:disabled {
+            opacity: 0.5; cursor: not-allowed;
+        }
+
+        /* ── 模式切换 Toggle ── */
+        .mode-toggle-group {
+            margin-bottom: 16px;
+            padding: 12px 16px;
+            background: var(--gray-50);
+            border-radius: var(--radius);
+            border: 1px solid var(--gray-200);
+        }
+        .mode-toggle-group > label:first-child {
+            display: block;
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--gray-700);
+            margin-bottom: 8px;
+        }
+        .toggle-row {
+            display: flex; align-items: center; gap: 10px;
+        }
+        .toggle-switch {
+            position: relative; display: inline-block; width: 44px; height: 24px;
+            flex-shrink: 0;
+        }
+        .toggle-switch input { opacity: 0; width: 0; height: 0; }
+        .toggle-slider {
+            position: absolute; cursor: pointer;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: var(--primary);
+            border-radius: 24px;
+            transition: background 0.2s;
+        }
+        .toggle-slider::before {
+            content: ""; position: absolute;
+            height: 20px; width: 20px;
+            left: 22px; bottom: 2px;
+            background: #fff; border-radius: 50%;
+            transition: transform 0.2s;
+        }
+        .toggle-switch input:not(:checked) + .toggle-slider {
+            background: var(--gray-400);
+        }
+        .toggle-switch input:not(:checked) + .toggle-slider::before {
+            transform: translateX(-20px);
+        }
+        .toggle-mode-label {
+            font-size: 14px; font-weight: 500; color: var(--gray-700);
+        }
+
+        .btn-download {
+            background: var(--success); color: #fff;
+            text-decoration: none;
+        }
+        .btn-download:hover { background: #047857; }
+
+        .error-msg {
+            color: var(--danger);
+            font-size: 13px;
+            margin-top: 4px;
+            display: none;
+        }
+        .error-msg.show { display: block; }
+
+        /* ============================================================
+           状态指示器
+           ============================================================ */
+        .status-bar {
+            display: none;
+            align-items: center;
+            gap: 10px;
+            padding: 12px 16px;
+            background: var(--gray-50);
+            border-radius: var(--radius);
+            border: 1px solid var(--gray-200);
+            margin-top: 16px;
+        }
+        .status-bar.visible { display: flex; }
+
+        .spinner {
+            width: 20px; height: 20px;
+            border: 2.5px solid var(--gray-300);
+            border-top-color: var(--primary);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            flex-shrink: 0;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        .status-dot {
+            width: 10px; height: 10px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+        .status-dot.pending { background: var(--warning); }
+        .status-dot.processing { background: var(--primary); animation: pulse 1s ease-in-out infinite; }
+        .status-dot.completed { background: var(--success); }
+        .status-dot.failed { background: var(--danger); }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+        .status-text { font-size: 14px; font-weight: 500; }
+        .status-text.pending { color: var(--warning); }
+        .status-text.processing { color: var(--primary); }
+        .status-text.completed { color: var(--success); }
+        .status-text.failed { color: var(--danger); }
+
+        .status-elapsed { font-size: 12px; color: var(--gray-400); margin-left: auto; }
+
+        /* ============================================================
+           结果面板
+           ============================================================ */
+        .result-panel { display: none; }
+        .result-panel.visible { display: block; }
+
+        .empty-state {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            color: var(--gray-400);
+            text-align: center;
+            padding: 40px;
+        }
+        .empty-state .icon { font-size: 64px; margin-bottom: 16px; opacity: 0.4; }
+        .empty-state p { font-size: 15px; }
+
+        /* ── 音频区域 ── */
+        .audio-section {
+            display: flex; align-items: center; gap: 16px;
+            padding: 16px;
+            background: var(--gray-50);
+            border-radius: var(--radius);
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+        .audio-section audio { flex: 1; min-width: 200px; }
+
+        /* ── JSON 展示区 ── */
+        .json-block {
+            background: var(--gray-900);
+            color: #e5e7eb;
+            border-radius: var(--radius);
+            padding: 16px;
+            font-family: "SF Mono", "Fira Code", "Fira Mono", "Menlo", "Consolas", monospace;
+            font-size: 13px;
+            line-height: 1.7;
+            overflow-x: auto;
+            max-height: 500px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+        .json-key   { color: #93c5fd; }
+        .json-str   { color: #86efac; }
+        .json-num   { color: #fde68a; }
+        .json-bool  { color: #c4b5fd; }
+        .json-null  { color: #fca5a5; }
+
+        /* ── 词时间戳表格 ── */
+        .timings-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+        .timings-table th {
+            text-align: left;
+            padding: 8px 12px;
+            background: var(--gray-50);
+            border-bottom: 2px solid var(--gray-200);
+            font-weight: 600;
+            color: var(--gray-600);
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .timings-table td {
+            padding: 7px 12px;
+            border-bottom: 1px solid var(--gray-100);
+        }
+        .timings-table tr:hover td { background: var(--gray-50); }
+        .timings-table .word-cell {
+            font-weight: 500;
+            color: var(--gray-900);
+        }
+        .timings-table .time-cell {
+            font-family: "SF Mono", "Fira Code", "Menlo", "Consolas", monospace;
+            color: var(--gray-500);
+            font-size: 12px;
+        }
+        .timings-table .duration-cell {
+            font-family: "SF Mono", "Fira Code", "Menlo", "Consolas", monospace;
+            color: var(--primary);
+            font-size: 12px;
+            font-weight: 500;
+        }
+        .timings-scroll {
+            max-height: 400px;
+            overflow-y: auto;
+            border: 1px solid var(--gray-200);
+            border-radius: var(--radius);
+        }
+        .no-timings {
+            text-align: center;
+            color: var(--gray-400);
+            padding: 20px;
+            font-size: 13px;
+        }
+
+        /* ── 元数据 ── */
+        .meta-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px 24px;
+            font-size: 13px;
+        }
+        .meta-item {
+            display: flex; justify-content: space-between;
+            padding: 6px 0;
+            border-bottom: 1px solid var(--gray-100);
+        }
+        .meta-label { color: var(--gray-500); }
+        .meta-value { font-weight: 500; color: var(--gray-800); }
+        .meta-value.mono {
+            font-family: "SF Mono", "Fira Code", "Menlo", "Consolas", monospace;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     头部
+     ═══════════════════════════════════════════════════════════════ -->
+<header class="header">
+    <div class="logo">🎙️</div>
+    <h1>Azure TTS 语音合成</h1>
+    <span class="badge">词级时间戳</span>
+</header>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     主体
+     ═══════════════════════════════════════════════════════════════ -->
+<main class="main">
+
+    <!-- ── 左侧：输入面板 ── -->
+    <aside>
+        <div class="card">
+            <div class="card-title">
+                <span class="icon">📝</span> 文本输入
+            </div>
+
+            <!-- 文本 -->
+            <div class="form-group">
+                <label for="text">输入文本 <span class="required">*</span></label>
+                <textarea id="text" placeholder="请输入要合成的文本内容…"></textarea>
+                <div class="error-msg" id="textError">请输入文本内容</div>
+            </div>
+
+            <!-- 发音人 -->
+            <div class="form-group">
+                <label for="voice">发音人</label>
+                <div class="voice-row">
+                    <select id="voiceSelect">
+                        <optgroup label="👉 推荐（通用）">
+                            <option value="zh-CN-XiaochenNeural">晓辰 (Xiaochen) · 女 · 默认</option>
+                            <option value="zh-CN-XiaoxiaoNeural">晓晓 (Xiaoxiao) · 女</option>
+                            <option value="zh-CN-YunxiNeural">云希 (Yunxi) · 男</option>
+                            <option value="zh-CN-YunyangNeural">云扬 (Yunyang) · 男</option>
+                        </optgroup>
+                        <optgroup label="👩 女声">
+                            <option value="zh-CN-XiaohanNeural">晓涵 (Xiaohan)</option>
+                            <option value="zh-CN-XiaomouNeural">晓墨 (Xiaomou)</option>
+                            <option value="zh-CN-XiaoruiNeural">晓睿 (Xiaorui)</option>
+                            <option value="zh-CN-XiaoshuangNeural">晓双 (Xiaoshuang)</option>
+                            <option value="zh-CN-XiaoyanNeural">晓颜 (Xiaoyan)</option>
+                            <option value="zh-CN-XiaoyouNeural">晓悠 (Xiaoyou)</option>
+                            <option value="zh-CN-XiaozhenNeural">晓珍 (Xiaozhen)</option>
+                            <option value="zh-CN-YunxiaNeural">云霞 (Yunxia)</option>
+                        </optgroup>
+                        <optgroup label="👨 男声">
+                            <option value="zh-CN-YunfengNeural">云枫 (Yunfeng)</option>
+                            <option value="zh-CN-YunhaoNeural">云浩 (Yunhao)</option>
+                            <option value="zh-CN-YunjianNeural">云健 (Yunjian)</option>
+                            <option value="zh-CN-YunyeNeural">云野 (Yunye)</option>
+                            <option value="zh-CN-YunzeNeural">云泽 (Yunze)</option>
+                        </optgroup>
+                        <optgroup label="🌐 多语言 / 方言">
+                            <option value="zh-CN-XiaochenMultilingualNeural">晓辰多语言 (Xiaochen Multilingual)</option>
+                            <option value="zh-CN-XiaoxiaoDialectsNeural">晓晓方言 (Xiaoxiao Dialects)</option>
+                            <option value="zh-CN-guangxi-YunqiNeural">广西·云奇 (Yunqi)</option>
+                            <option value="zh-CN-henan-YundengNeural">河南·云登 (Yundeng)</option>
+                            <option value="zh-CN-liaoning-YunbiaoNeural">辽宁·云彪 (Yunbiao)</option>
+                            <option value="zh-CN-shaanxi-XiaoniNeural">陕西·小妮 (Xiaoni)</option>
+                            <option value="zh-CN-shandong-YunxiangNeural">山东·云翔 (Yunxiang)</option>
+                            <option value="zh-CN-sichuan-YunxiNeural">四川·云希 (Yunxi)</option>
+                        </optgroup>
+                    </select>
+                    <input type="text" id="voiceCustom" placeholder="自定义…">
+                </div>
+            </div>
+
+            <!-- 语速 -->
+            <div class="form-group">
+                <label for="rate">语速</label>
+                <div class="rate-row">
+                    <input type="text" id="rate" value="+20%" placeholder="如 +20%、-10%、1.0">
+                    <div class="rate-presets">
+                        <button onclick="setRate('-30%')">-30%</button>
+                        <button onclick="setRate('-10%')">-10%</button>
+                        <button onclick="setRate('+0%')">正常</button>
+                        <button onclick="setRate('+20%')">+20%</button>
+                        <button onclick="setRate('+50%')">+50%</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 合成模式切换 -->
+            <div class="mode-toggle-group">
+                <label>合成模式</label>
+                <div class="toggle-row">
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="modeToggle">
+                        <span class="toggle-slider"></span>
+                    </label>
+                    <span class="toggle-mode-label" id="modeLabel">SDK（实时）</span>
+                </div>
+            </div>
+
+            <!-- 提交 -->
+            <button class="btn btn-primary" id="submitBtn" onclick="submitTask()">
+                🎤 开始合成
+            </button>
+
+            <!-- 状态 -->
+            <div class="status-bar" id="statusBar">
+                <div class="status-dot pending" id="statusDot"></div>
+                <span class="status-text" id="statusText">排队中</span>
+                <span class="status-elapsed" id="statusElapsed"></span>
+            </div>
+        </div>
+    </aside>
+
+    <!-- ── 右侧：结果面板 ── -->
+    <section class="result-panel" id="resultPanel">
+        <div class="empty-state" id="emptyState">
+            <div class="icon">🎧</div>
+            <p>输入文本并点击「开始合成」后<br>结果将在此展示</p>
+        </div>
+    </section>
+
+</main>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     JS 逻辑
+     ═══════════════════════════════════════════════════════════════ -->
+<script>
+// ── 状态 ─────────────────────────────────────────────────────────
+let pollTimer = null;
+let pollStartTime = null;
+
+// ── DOM 引用 ─────────────────────────────────────────────────────
+const $ = id => document.getElementById(id);
+const textInput = $('text');
+const voiceSelect = $('voiceSelect');
+const voiceCustom = $('voiceCustom');
+const rateInput = $('rate');
+const submitBtn = $('submitBtn');
+const textError = $('textError');
+const statusBar = $('statusBar');
+const statusDot = $('statusDot');
+const statusText = $('statusText');
+const statusElapsed = $('statusElapsed');
+const resultPanel = $('resultPanel');
+const emptyState = $('emptyState');
+
+// ── 语音值：优先自定义输入，否则用下拉 ───────────────────────────
+function getVoice() {
+    return voiceCustom.value.trim() || voiceSelect.value;
+}
+
+// ── 语速快捷设置 ────────────────────────────────────────────────
+function setRate(val) {
+    rateInput.value = val;
+}
+
+// ── 合成模式切换 ────────────────────────────────────────────────
+function getMode() {
+    return $('modeToggle').checked ? 'batch' : 'sdk';
+}
+
+$('modeToggle').addEventListener('change', function() {
+    $('modeLabel').textContent = this.checked ? 'API（批处理）' : 'SDK（实时）';
+});
+
+// ── 表单校验 ─────────────────────────────────────────────────────
+function validate() {
+    if (!textInput.value.trim()) {
+        textError.classList.add('show');
+        textInput.focus();
+        return false;
+    }
+    textError.classList.remove('show');
+    return true;
+}
+
+// ── 格式化耗时 ───────────────────────────────────────────────────
+function formatElapsed(ms) {
+    const s = Math.floor(ms / 1000);
+    if (s < 60) return `${s} 秒`;
+    return `${Math.floor(s / 60)} 分 ${s % 60} 秒`;
+}
+
+// ── 状态映射 ─────────────────────────────────────────────────────
+const STATUS_MAP = {
+    pending:    { text: '排队中', cls: 'pending' },
+    processing: { text: '合成中', cls: 'processing' },
+    completed:  { text: '已完成', cls: 'completed' },
+    failed:     { text: '失败',   cls: 'failed' },
+};
+
+function setStatusUI(status) {
+    const info = STATUS_MAP[status] || { text: status, cls: '' };
+    statusDot.className = 'status-dot ' + info.cls;
+    statusText.className = 'status-text ' + info.cls;
+    statusText.textContent = info.text;
+
+    if (status === 'processing' || status === 'pending') {
+        // 旋转动画：processing 用 spinner 替掉 dot
+        if (status === 'processing' && !statusDot.classList.contains('spinner')) {
+            statusDot.style.display = 'none';
+            if (!document.getElementById('spinnerEl')) {
+                const spinner = document.createElement('div');
+                spinner.id = 'spinnerEl';
+                spinner.className = 'spinner';
+                statusDot.parentNode.insertBefore(spinner, statusDot);
+            }
+        }
+    } else {
+        statusDot.style.display = '';
+        const spinnerEl = document.getElementById('spinnerEl');
+        if (spinnerEl) spinnerEl.remove();
+    }
+}
+
+// ── 高亮 JSON ────────────────────────────────────────────────────
+function syntaxHighlight(json) {
+    return JSON.stringify(json, null, 2)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(
+            /("(\\u[a-fA-F0-9]{4}|\\[^u]|[^"\\])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g,
+            function (match) {
+                let cls = 'json-num';
+                if (/^"/.test(match)) {
+                    cls = /:$/.test(match) ? 'json-key' : 'json-str';
+                } else if (/true|false/.test(match)) {
+                    cls = 'json-bool';
+                } else if (/null/.test(match)) {
+                    cls = 'json-null';
+                }
+                return '<span class="' + cls + '">' + match + '</span>';
+            }
+        );
+}
+
+// ── 构建结果面板 ─────────────────────────────────────────────────
+function buildResultPanel(task) {
+    const audios = task.audio_url || `/tts/audio/${task.audio_file || task.task_id}`;
+
+    let timingsHtml = '';
+    if (task.word_timings && task.word_timings.length > 0) {
+        const rows = task.word_timings.map((w, i) => `
+            <tr>
+                <td style="color:var(--gray-400);font-size:11px;width:32px">${i + 1}</td>
+                <td class="word-cell">${escHtml(w.text)}</td>
+                <td class="time-cell">${w.start_ms} ms</td>
+                <td class="time-cell">${w.end_ms} ms</td>
+                <td class="duration-cell">${w.end_ms - w.start_ms} ms</td>
+            </tr>
+        `).join('');
+        timingsHtml = `
+            <div class="timings-scroll">
+                <table class="timings-table">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>文本</th>
+                            <th>开始</th>
+                            <th>结束</th>
+                            <th>持续</th>
+                        </tr>
+                    </thead>
+                    <tbody>${rows}</tbody>
+                </table>
+            </div>`;
+    } else {
+        const rawVal = JSON.stringify(task.word_timings);
+        timingsHtml = '<div class="no-timings">无词级时间戳数据'
+            + '<br><small style="color:#999">word_timings 原始值: ' + escHtml(rawVal) + ' (类型: ' + (task.word_timings === null ? 'null' : Array.isArray(task.word_timings) ? 'array[' + task.word_timings.length + ']' : typeof task.word_timings) + ')</small>'
+            + '</div>';
+    }
+
+    // 构建完整的原始数据（不含 text 字段用于显示）
+    const fullData = { ...task };
+    // 保留 text 用于展示
+
+    const html = `
+        <div class="card">
+            <div class="card-title">
+                <span class="icon">🔊</span> 音频播放
+            </div>
+            <div class="audio-section">
+                <audio id="audioPlayer" controls src="${audios}"></audio>
+                <a class="btn btn-download" href="${audios}" download="${task.task_id}.mp3">
+                    ⬇ 下载 MP3
+                </a>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-title">
+                <span class="icon">📊</span> SDK 完整返回数据
+            </div>
+            <div class="json-block">${syntaxHighlight(task)}</div>
+        </div>
+
+        <div class="card">
+            <div class="card-title">
+                <span class="icon">⏱️</span> 词级时间戳
+                <span style="font-weight:400;font-size:12px;color:var(--gray-400);margin-left:8px">
+                    （${task.word_timings ? task.word_timings.length : 0} 个词 / 总时长 ${task.total_ms != null ? task.total_ms + ' ms' : '未知'}）
+                </span>
+            </div>
+            ${timingsHtml}
+        </div>
+
+        <div class="card">
+            <div class="card-title">
+                <span class="icon">📋</span> 任务详情
+            </div>
+            <div class="meta-grid">
+                <div class="meta-item">
+                    <span class="meta-label">任务 ID</span>
+                    <span class="meta-value mono">${escHtml(task.task_id)}</span>
+                </div>
+                <div class="meta-item">
+                    <span class="meta-label">状态</span>
+                    <span class="meta-value" style="color:var(--success)">${escHtml(task.status)}</span>
+                </div>
+                <div class="meta-item">
+                    <span class="meta-label">发音人</span>
+                    <span class="meta-value">${escHtml(task.voice)}</span>
+                </div>
+                <div class="meta-item">
+                    <span class="meta-label">语速</span>
+                    <span class="meta-value">${escHtml(task.rate)}</span>
+                </div>
+                <div class="meta-item">
+                    <span class="meta-label">总时长</span>
+                    <span class="meta-value">${task.total_ms != null ? task.total_ms + ' ms' : '—'}</span>
+                </div>
+                <div class="meta-item">
+                    <span class="meta-label">创建时间</span>
+                    <span class="meta-value">${escHtml(task.created_at || '—')}</span>
+                </div>
+                <div class="meta-item">
+                    <span class="meta-label">合成文本</span>
+                    <span class="meta-value" style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(task.text || '')}">${escHtml(task.text || '—')}</span>
+                </div>
+                <div class="meta-item">
+                    <span class="meta-label">更新时间</span>
+                    <span class="meta-value">${escHtml(task.updated_at || '—')}</span>
+                </div>
+            </div>
+        </div>
+    `;
+
+    resultPanel.innerHTML = html;
+    resultPanel.classList.add('visible');
+    emptyState.style.display = 'none';
+}
+
+function escHtml(s) {
+    if (s == null) return '';
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+// ── 轮询任务状态 ─────────────────────────────────────────────────
+function startPolling(taskId) {
+    pollStartTime = Date.now();
+    statusBar.classList.add('visible');
+    setStatusUI('pending');
+
+    function poll() {
+        const elapsed = Date.now() - pollStartTime;
+        statusElapsed.textContent = formatElapsed(elapsed);
+
+        fetch(`/tts/${taskId}`)
+            .then(res => {
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                return res.json();
+            })
+            .then(task => {
+                setStatusUI(task.status);
+
+                if (task.status === 'completed') {
+                    clearInterval(pollTimer);
+                    pollTimer = null;
+                    submitBtn.disabled = false;
+                    submitBtn.textContent = '🎤 开始合成';
+
+                    // 让状态点变绿
+                    const spinnerEl = document.getElementById('spinnerEl');
+                    if (spinnerEl) spinnerEl.remove();
+                    statusDot.style.display = '';
+
+                    buildResultPanel(task);
+                }
+
+                if (task.status === 'failed') {
+                    clearInterval(pollTimer);
+                    pollTimer = null;
+                    submitBtn.disabled = false;
+                    submitBtn.textContent = '🎤 开始合成';
+
+                    const spinnerEl = document.getElementById('spinnerEl');
+                    if (spinnerEl) spinnerEl.remove();
+                    statusDot.style.display = '';
+
+                    // 显示失败信息
+                    resultPanel.innerHTML = `
+                        <div class="card">
+                            <div class="card-title">
+                                <span class="icon">❌</span> 合成失败
+                            </div>
+                            <p style="color:var(--danger);margin-bottom:12px">${escHtml(task.error || '未知错误')}</p>
+                            <div class="json-block">${syntaxHighlight(task)}</div>
+                        </div>`;
+                    resultPanel.classList.add('visible');
+                    emptyState.style.display = 'none';
+                }
+            })
+            .catch(err => {
+                console.error('轮询失败:', err);
+                // 网络错误不中断轮询，继续尝试
+            });
+    }
+
+    poll(); // 立即执行第一次
+    pollTimer = setInterval(poll, 1500);
+}
+
+// ── 提交任务 ─────────────────────────────────────────────────────
+function submitTask() {
+    if (!validate()) return;
+
+    submitBtn.disabled = true;
+    submitBtn.textContent = '⏳ 提交中…';
+
+    const body = {
+        text: textInput.value.trim(),
+        voice: getVoice(),
+        rate: rateInput.value.trim() || '+20%',
+        mode: getMode(),
+    };
+
+    fetch('/tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+    })
+        .then(res => {
+            if (!res.ok) return res.json().then(e => { throw new Error(e.detail || `HTTP ${res.status}`); });
+            return res.json();
+        })
+        .then(data => {
+            // 清理旧结果
+            resultPanel.innerHTML = '';
+            resultPanel.classList.remove('visible');
+            emptyState.style.display = '';
+
+            // 开始轮询
+            submitBtn.textContent = '⏳ 合成中…';
+            startPolling(data.task_id);
+        })
+        .catch(err => {
+            alert('提交失败：' + err.message);
+            submitBtn.disabled = false;
+            submitBtn.textContent = '🎤 开始合成';
+        });
+}
+
+// ── 快捷键：Ctrl+Enter 提交 ──────────────────────────────────────
+textInput.addEventListener('keydown', function(e) {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+        e.preventDefault();
+        submitTask();
+    }
+});
+
+// ── 输入时清除校验错误 ──────────────────────────────────────────
+textInput.addEventListener('input', function() {
+    textError.classList.remove('show');
+});
+</script>
+</body>
+</html>

@@ -11,7 +11,7 @@ import uuid
 import sqlite3
 from datetime import datetime
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Body
 from fastapi.responses import FileResponse
 
 from config import DEFAULT_VOICE, DEFAULT_RATE, AUDIO_DIR
@@ -42,24 +42,26 @@ def _task_to_dict(row: sqlite3.Row) -> dict:
 # ── 端点：提交 TTS 任务 ────────────────────────────────────────────────────
 @router.post("/tts")
 def create_tts_task(
-    text: str,
-    voice: str = DEFAULT_VOICE,
-    rate: str = DEFAULT_RATE,
+    text: str = Body(...),
+    voice: str = Body(default=DEFAULT_VOICE),
+    rate: str = Body(default=DEFAULT_RATE),
+    mode: str = Body(default="sdk"),
 ):
     """
     提交文本合成任务，立即返回 task_id。
 
-    参数：
+    请求体 (JSON)：
       text  — 要合成的文本（必填，不能为空或全空白）
       voice — Azure 语音名称，默认 zh-CN-XiaochenNeural
       rate  — 语速，如 "+20%" "-10%" "1.0"，对应 SSML prosody rate
+      mode  — 合成模式："batch"（默认，REST API）或 "sdk"（实时 SDK）
 
     返回：
-      200  {"task_id": "tts_...", "status": "pending"}
+      200  {"task_id": "tts_...", "status": "pending", "mode": "..."}
       400  text 为空时
 
     流程：
-      DB 写入 pending 任务 → 入队 worker 队列 → 立即返回
+      DB 写入 pending 任务 → 按 mode 入队对应队列 → 立即返回
     """
     if not text.strip():
         raise HTTPException(400, "text is empty")
@@ -70,15 +72,20 @@ def create_tts_task(
 
     with get_db() as conn:
         conn.execute(
-            "INSERT INTO tasks (task_id, text, voice, rate, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (task_id, text, voice, rate, now, now),
+            "INSERT INTO tasks (task_id, text, voice, rate, mode, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (task_id, text, voice, rate, mode, now, now),
         )
         conn.commit()
 
-    # 提交到后台队列，worker 线程异步处理
-    _queue.put(task_id)
-    return {"task_id": task_id, "status": "pending"}
+    # 按模式分流到不同队列
+    if mode == "batch":
+        from batch_worker import _batch_queue
+        _batch_queue.put(task_id)
+    else:
+        _queue.put(task_id)  # SDK 路径（现有逻辑）
+
+    return {"task_id": task_id, "status": "pending", "mode": mode}
 
 
 # ── 端点：查询任务详情 ──────────────────────────────────────────────────────
@@ -180,7 +187,7 @@ def delete_task(task_id: str):
     """
     with get_db() as conn:
         row = conn.execute(
-            "SELECT audio_file FROM tasks WHERE task_id = ?", (task_id,)
+            "SELECT audio_file, mode, synthesis_id FROM tasks WHERE task_id = ?", (task_id,)
         ).fetchone()
 
         if not row:
@@ -192,6 +199,14 @@ def delete_task(task_id: str):
                 (AUDIO_DIR / row["audio_file"]).unlink(missing_ok=True)
             except OSError:
                 print(f"[WARN] 删除音频文件失败: {traceback.format_exc()}")
+
+        # 如果是 batch 任务，尝试删除 Azure 端资源（best-effort）
+        if row["mode"] == "batch" and row["synthesis_id"]:
+            try:
+                from batch_client import delete_batch_job
+                delete_batch_job(row["synthesis_id"])
+            except Exception:
+                pass  # 不影响本地删除
 
         # 删除数据库记录
         conn.execute("DELETE FROM tasks WHERE task_id = ?", (task_id,))
@@ -207,10 +222,15 @@ def health():
     服务健康检查。
 
     返回：
-      {"status": "ok", "queue_size": <int>}
+      {"status": "ok", "queue_size": <int>, "batch_queue_size": <int>}
 
-    queue_size 可用于监控积压情况：
+    queue_size / batch_queue_size 可用于监控积压情况：
       - 0    = 空闲，队列无待处理任务
       - >100 = 需要关注，处理速度跟不上提交速度
     """
-    return {"status": "ok", "queue_size": _queue.qsize()}
+    from batch_worker import _batch_queue
+    return {
+        "status": "ok",
+        "queue_size": _queue.qsize(),
+        "batch_queue_size": _batch_queue.qsize(),
+    }

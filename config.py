@@ -31,6 +31,20 @@ SPEECH_REGION = os.environ.get("AZURE_SPEECH_REGION", "eastus")
 DEFAULT_VOICE = os.environ.get("TTS_DEFAULT_VOICE", "zh-CN-XiaochenNeural")
 DEFAULT_RATE = os.environ.get("TTS_DEFAULT_RATE", "+20%")
 
+# ── Batch Synthesis API 配置 ──────────────────────────────────────────────────
+# REST API 版本
+BATCH_API_VERSION = "2024-04-01"
+# 自定义 API 端点（可选，优先级 > 区域端点）。
+# 如遇到 401 PermissionDenied，可尝试: https://<资源名>.cognitiveservices.azure.com
+# 环境变量：TTS_BATCH_ENDPOINT
+BATCH_ENDPOINT = os.environ.get("TTS_BATCH_ENDPOINT", "")
+# 轮询 Azure batch 任务状态的间隔（秒）
+BATCH_POLL_INTERVAL = int(os.environ.get("TTS_BATCH_POLL_INTERVAL", "5"))
+# batch 任务最大等待时间（秒），超时后标记 failed
+BATCH_MAX_TIMEOUT = int(os.environ.get("TTS_BATCH_MAX_TIMEOUT", "600"))
+# batch 后台 worker 线程数
+MAX_BATCH_WORKERS = int(os.environ.get("TTS_MAX_BATCH_WORKERS", "2"))
+
 
 def _load_dotenv():
     """
