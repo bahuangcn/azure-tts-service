@@ -27,6 +27,9 @@ import mutagen
 from config import SPEECH_KEY, SPEECH_REGION, AUDIO_DIR, TTS_MAX_CHUNK_CHARS, TTS_SDK_TIMEOUT
 from database import get_db
 from chunker import split_text, concat_audio_files, merge_word_timings
+from logger import get_logger
+
+log = get_logger(__name__)
 
 # ── 共享任务队列 ────────────────────────────────────────────────────────────
 # 线程安全的无界 FIFO 队列，routes.py 通过 from worker import _queue 引用
@@ -112,9 +115,9 @@ def _get_audio_duration(audio_path: str) -> int | None:
             if audio is not None and hasattr(audio.info, "length"):
                 total_ms = int(audio.info.length * 1000)
         except Exception:
-            print(f"[WARN] mutagen 解析音频时长失败: {traceback.format_exc()}")
+            log.warning(f"mutagen 解析音频时长失败: {traceback.format_exc()}")
     else:
-        print(f"[WARN] 音频文件为空（{file_size} bytes），Azure SDK 未写入数据")
+        log.warning(f"音频文件为空（{file_size} bytes），Azure SDK 未写入数据")
     return total_ms
 
 
@@ -163,14 +166,14 @@ def _synth_one(text: str, voice: str, rate: str, output_path: str) -> tuple:
             duration_ms = int(evt.duration.total_seconds() * 1000)
         except Exception:
             duration_ms = 0
-            print(f"[WARN] word_boundary duration 获取失败: {traceback.format_exc()}")
+            log.warning(f"word_boundary duration 获取失败: {traceback.format_exc()}")
 
         timings.append({
             "text": evt.text,
             "offset_ms": offset_ms,
             "duration_ms": duration_ms,
         })
-        print(f"[DEBUG] word_boundary: text=\"{evt.text}\" offset_ms={offset_ms} duration_ms={duration_ms}")
+        log.debug(f"word_boundary: text=\"{evt.text}\" offset_ms={offset_ms} duration_ms={duration_ms}")
 
     synthesizer.synthesis_word_boundary.connect(_on_word_boundary)
 
@@ -199,7 +202,8 @@ def _synth_one(text: str, voice: str, rate: str, output_path: str) -> tuple:
         raise synth_error
 
     result = synth_result
-    print(f"[DEBUG] 合成完成, reason={result.reason}, timings 数量={len(timings)}")
+    log.debug(f"合成完成, reason={result.reason}, timings 数量={len(timings)}")
+    log.info(f"合成完成: {len(text)} chars, {len(timings)} words")
 
     # ── 4. 检查合成结果 ────────────────────────────────────────────────
     if result.reason != speechsdk.ResultReason.SynthesizingAudioCompleted:
@@ -255,7 +259,7 @@ def _synthesize_chunked(task_id: str, text: str, voice: str, rate: str,
       (merged_word_timings: list[dict], total_ms: int)
     """
     chunks = split_text(text, TTS_MAX_CHUNK_CHARS)
-    print(f"[INFO] 长文本分块: {len(text)} chars → {len(chunks)} chunks (task={task_id})")
+    log.info(f"长文本分块: {len(text)} chars → {len(chunks)} chunks (task={task_id})")
 
     chunk_paths: list = []
     chunk_timings: list[list[dict]] = []
@@ -268,7 +272,7 @@ def _synthesize_chunked(task_id: str, text: str, voice: str, rate: str,
             chunk_paths.append(chunk_path)
             chunk_timings.append(timings)
             chunk_durations.append(duration)
-            print(f"[INFO] Chunk {i + 1}/{len(chunks)} done: "
+            log.info(f"Chunk {i + 1}/{len(chunks)} done: "
                   f"{len(chunk_text)} chars, {duration}ms")
 
         # 拼接音频（chunk_paths 是 Path 对象列表）
@@ -340,7 +344,8 @@ def _synthesize(task_id: str):
 
     # ── 4. 回写完成状态 ────────────────────────────────────────────────
     wt_json = json.dumps(word_timings, ensure_ascii=False)
-    print(f"[DEBUG] 写入 DB, word_timings={wt_json}, total_ms={total_ms}")
+    log.debug(f"写入 DB, word_timings={wt_json}, total_ms={total_ms}")
+    log.info(f"任务完成: task={task_id}, total_ms={total_ms}, words={len(word_timings)}")
     _mark_status(
         task_id,
         "completed",

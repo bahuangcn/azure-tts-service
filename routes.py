@@ -17,6 +17,9 @@ from fastapi.responses import FileResponse
 from config import DEFAULT_VOICE, DEFAULT_RATE, AUDIO_DIR
 from database import get_db
 from worker import _queue
+from logger import get_logger
+
+log = get_logger(__name__)
 
 router = APIRouter()
 
@@ -198,7 +201,7 @@ def delete_task(task_id: str):
             try:
                 (AUDIO_DIR / row["audio_file"]).unlink(missing_ok=True)
             except OSError:
-                print(f"[WARN] 删除音频文件失败: {traceback.format_exc()}")
+                log.warning(f"删除音频文件失败: {traceback.format_exc()}")
 
         # 如果是 batch 任务，尝试删除 Azure 端资源（best-effort）
         if row["mode"] == "batch" and row["synthesis_id"]:

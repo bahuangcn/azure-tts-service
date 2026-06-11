@@ -29,6 +29,9 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 from config import SPEECH_KEY, SPEECH_REGION, BATCH_API_VERSION, BATCH_ENDPOINT
+from logger import get_logger
+
+log = get_logger(__name__)
 
 # ── 端点构造 ──────────────────────────────────────────────────────────────────
 # 优先使用自定义端点，否则使用区域端点
@@ -266,7 +269,7 @@ def download_batch_results(result_url: str, task_id: str, audio_dir: Path) -> di
             if audio is not None and hasattr(audio.info, "length"):
                 total_ms = int(audio.info.length * 1000)
         except Exception:
-            print(f"[WARN] mutagen 解析 batch 音频时长失败: {traceback.format_exc()}")
+            log.warning(f"mutagen 解析 batch 音频时长失败: {traceback.format_exc()}")
 
     # mutagen 失败时用词边界时间戳估算
     if total_ms is None and word_timings:
@@ -293,7 +296,7 @@ def delete_batch_job(synthesis_id: str) -> None:
         resp = requests.delete(url, headers=_headers(), timeout=30)
         resp.raise_for_status()
     except Exception:
-        print(f"[WARN] 删除 Azure batch 任务失败 ({synthesis_id}): {traceback.format_exc()}")
+        log.warning(f"删除 Azure batch 任务失败 ({synthesis_id}): {traceback.format_exc()}")
 
 
 # ── 词边界格式映射 ──────────────────────────────────────────────────────────

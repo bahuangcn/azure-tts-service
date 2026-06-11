@@ -51,6 +51,12 @@ TTS_MAX_CHUNK_CHARS = int(os.environ.get("TTS_MAX_CHUNK_CHARS", "2000"))
 # SDK 单次合成超时秒数（防止 worker 线程永久阻塞）
 TTS_SDK_TIMEOUT = int(os.environ.get("TTS_SDK_TIMEOUT", "600"))
 
+# ── 日志配置 ─────────────────────────────────────────────────────────────────
+# 日志级别：DEBUG / INFO / WARNING / ERROR，默认 INFO
+TTS_LOG_LEVEL = os.environ.get("TTS_LOG_LEVEL", "INFO")
+# 日志文件目录，默认项目根目录下的 logs/
+TTS_LOG_DIR = os.environ.get("TTS_LOG_DIR", str(Path(__file__).parent / "logs"))
+
 
 def _load_dotenv():
     """
