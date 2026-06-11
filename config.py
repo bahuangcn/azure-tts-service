@@ -45,6 +45,12 @@ BATCH_MAX_TIMEOUT = int(os.environ.get("TTS_BATCH_MAX_TIMEOUT", "600"))
 # batch 后台 worker 线程数
 MAX_BATCH_WORKERS = int(os.environ.get("TTS_MAX_BATCH_WORKERS", "2"))
 
+# ── Chunking 配置 ─────────────────────────────────────────────────────────────
+# 单次合成最大字符数（默认 2000，约 7-8 分钟中文语音）
+TTS_MAX_CHUNK_CHARS = int(os.environ.get("TTS_MAX_CHUNK_CHARS", "2000"))
+# SDK 单次合成超时秒数（防止 worker 线程永久阻塞）
+TTS_SDK_TIMEOUT = int(os.environ.get("TTS_SDK_TIMEOUT", "600"))
+
 
 def _load_dotenv():
     """
