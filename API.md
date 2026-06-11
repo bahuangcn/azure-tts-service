@@ -1,18 +1,18 @@
 # Azure TTS Service — API 接口文档
 
-> 适用版本: v1.0 | 基础路径: `http://{host}:8002` | 内容类型: `application/json`
+> 适用版本: v1.0 | 基础路径: `http://{host}:8002/azure_api` | 内容类型: `application/json`
 
 ## 目录
 
 - [1. 概述](#1-概述)
 - [2. 任务状态流转](#2-任务状态流转)
 - [3. 端点详情](#3-端点详情)
-  - [POST /tts — 提交合成任务](#post-tts--提交合成任务)
-  - [GET /tts/{task_id} — 查询任务详情](#get-ttstask_id--查询任务详情)
-  - [GET /tts/audio/{task_id} — 下载音频文件](#get-ttsaudiotask_id--下载音频文件)
-  - [GET /tts — 任务列表](#get-tts--任务列表)
-  - [DELETE /tts/{task_id} — 删除任务](#delete-ttstask_id--删除任务)
-  - [GET /health — 健康检查](#get-health--健康检查)
+  - [POST /azure_api/tts — 提交合成任务](#post-azure_apitts--提交合成任务)
+  - [GET /azure_api/tts/{task_id} — 查询任务详情](#get-azure_apittstask_id--查询任务详情)
+  - [GET /azure_api/tts/audio/{task_id} — 下载音频文件](#get-azure_apittsaudiotask_id--下载音频文件)
+  - [GET /azure_api/tts — 任务列表](#get-azure_apitts--任务列表)
+  - [DELETE /azure_api/tts/{task_id} — 删除任务](#delete-azure_apittstask_id--删除任务)
+  - [GET /azure_api/health — 健康检查](#get-azure_apihealth--健康检查)
 - [4. 两种合成模式](#4-两种合成模式)
 - [5. 错误处理](#5-错误处理)
 - [6. 调用示例](#6-调用示例)
@@ -29,7 +29,7 @@ Azure TTS Service 是一个**异步**文本转语音 HTTP 微服务。核心流�
 
 **关键设计**：
 - 所有合成操作是异步的——POST 立即返回，合成在后台线程执行
-- 需要客户端**轮询** `GET /tts/{task_id}` 直到 `status` 变为 `completed` 或 `failed`
+- 需要客户端**轮询** `GET /azure_api/tts/{task_id}` 直到 `status` 变为 `completed` 或 `failed`
 - 支持两种合成引擎：SDK（实时）和 Batch（REST API），通过 `mode` 参数切换
 - 返回**词级时间戳**（每个词的起止毫秒偏移），适用于字幕/对齐场景
 
@@ -61,7 +61,7 @@ NotStarted → Running → Succeeded
 
 ## 3. 端点详情
 
-### POST /tts — 提交合成任务
+### POST /azure_api/tts — 提交合成任务
 
 提交文本合成任务，立即返回 `task_id`。文本在后台由 worker 线程异步合成。
 
@@ -107,13 +107,13 @@ NotStarted → Running → Succeeded
 
 ---
 
-### GET /tts/{task_id} — 查询任务详情
+### GET /azure_api/tts/{task_id} — 查询任务详情
 
 **路径参数**:
 
 | 参数 | 类型 | 说明 |
 |------|------|------|
-| `task_id` | `string` | 由 `POST /tts` 返回的任务 ID |
+| `task_id` | `string` | 由 `POST /azure_api/tts` 返回的任务 ID |
 
 **响应** (200) — pending 状态:
 
@@ -145,7 +145,7 @@ NotStarted → Running → Succeeded
   "rate": "+20%",
   "mode": "sdk",
   "audio_file": "tts_a1b2c3d4e5f6.mp3",
-  "audio_url": "/tts/audio/tts_a1b2c3d4e5f6",
+  "audio_url": "/azure_api/tts/audio/tts_a1b2c3d4e5f6",
   "word_timings": [
     {"text": "你好", "start_ms": 50, "end_ms": 187},
     {"text": "世界", "start_ms": 187, "end_ms": 350}
@@ -168,7 +168,7 @@ NotStarted → Running → Succeeded
 | `rate` | `string` | 总是 | 语速参数 |
 | `mode` | `string` | 总是 | `sdk` 或 `batch` |
 | `audio_file` | `string\|null` | completed 时 | 音频文件名（不含目录路径） |
-| `audio_url` | `string\|null` | completed 时 | 音频下载相对路径 `/tts/audio/{task_id}` |
+| `audio_url` | `string\|null` | completed 时 | 音频下载相对路径 `/azure_api/tts/audio/{task_id}` |
 | `word_timings` | `array\|null` | completed 时 | 词级时间戳，见下方子表 |
 | `total_ms` | `int\|null` | completed 时 | 音频总时长（毫秒） |
 | `synthesis_id` | `string\|null` | batch 模式 | Azure Batch API 的合成 ID |
@@ -193,7 +193,7 @@ NotStarted → Running → Succeeded
 
 ---
 
-### GET /tts/audio/{task_id} — 下载音频文件
+### GET /azure_api/tts/audio/{task_id} — 下载音频文件
 
 **路径参数**:
 
@@ -214,7 +214,7 @@ NotStarted → Running → Succeeded
 
 ---
 
-### GET /tts — 任务列表
+### GET /azure_api/tts — 任务列表
 
 **查询参数**:
 
@@ -244,13 +244,13 @@ NotStarted → Running → Succeeded
 ]
 ```
 
-> **注意**: 列表响应中 **不包含 `text` 字段**（原始文本仅在单任务查询 `GET /tts/{task_id}` 中返回），以减少响应体积和保护用户隐私。
+> **注意**: 列表响应中 **不包含 `text` 字段**（原始文本仅在单任务查询 `GET /azure_api/tts/{task_id}` 中返回），以减少响应体积和保护用户隐私。
 
 **排序**: 按 `created_at` 降序（最新任务在前）。
 
 ---
 
-### DELETE /tts/{task_id} — 删除任务
+### DELETE /azure_api/tts/{task_id} — 删除任务
 
 删除任务记录及关联的音频文件（磁盘 + Azure 端资源）。
 
@@ -279,7 +279,7 @@ NotStarted → Running → Succeeded
 
 ---
 
-### GET /health — 健康检查
+### GET /azure_api/health — 健康检查
 
 **响应** (200):
 
@@ -338,14 +338,14 @@ NotStarted → Running → Succeeded
 
 | 状态码 | 端点 | 含义 |
 |--------|------|------|
-| `400` | `POST /tts` | `text` 字段为空或全空白 |
-| `404` | `GET /tts/{task_id}` | 任务 ID 不存在 |
-| `404` | `GET /tts/audio/{task_id}` | 音频未就绪或任务不存在 |
-| `404` | `DELETE /tts/{task_id}` | 任务 ID 不存在 |
+| `400` | `POST /azure_api/tts` | `text` 字段为空或全空白 |
+| `404` | `GET /azure_api/tts/{task_id}` | 任务 ID 不存在 |
+| `404` | `GET /azure_api/tts/audio/{task_id}` | 音频未就绪或任务不存在 |
+| `404` | `DELETE /azure_api/tts/{task_id}` | 任务 ID 不存在 |
 
 ### 任务级错误（`status=failed`）
 
-当任务合成失败时，`GET /tts/{task_id}` 响应中 `status` 为 `"failed"`，`error` 字段包含具体错误信息。常见错误：
+当任务合成失败时，`GET /azure_api/tts/{task_id}` 响应中 `status` 为 `"failed"`，`error` 字段包含具体错误信息。常见错误：
 
 | error 内容关键词 | 诊断 |
 |-----------------|------|
@@ -363,7 +363,7 @@ NotStarted → Running → Succeeded
 
 ```bash
 # 1. 提交任务
-curl -s -X POST http://localhost:8002/tts \
+curl -s -X POST http://localhost:8002/azure_api/tts \
   -H "Content-Type: application/json" \
   -d '{"text":"你好世界，这是一段测试文本。","voice":"zh-CN-XiaochenNeural","rate":"+20%","mode":"sdk"}'
 # → {"task_id":"tts_a1b2c3d4e5f6","status":"pending","mode":"sdk"}
@@ -371,20 +371,20 @@ curl -s -X POST http://localhost:8002/tts \
 # 2. 轮询任务状态（直到 completed）
 TASK_ID="tts_a1b2c3d4e5f6"
 while true; do
-  STATUS=$(curl -s http://localhost:8002/tts/$TASK_ID | jq -r '.status')
+  STATUS=$(curl -s http://localhost:8002/azure_api/tts/$TASK_ID | jq -r '.status')
   echo "Status: $STATUS"
   [ "$STATUS" = "completed" ] || [ "$STATUS" = "failed" ] && break
   sleep 1
 done
 
 # 3. 查看完整结果（含词级时间戳）
-curl -s http://localhost:8002/tts/$TASK_ID | jq .
+curl -s http://localhost:8002/azure_api/tts/$TASK_ID | jq .
 
 # 4. 下载音频
-curl -o output.mp3 http://localhost:8002/tts/audio/$TASK_ID
+curl -o output.mp3 http://localhost:8002/azure_api/tts/audio/$TASK_ID
 
 # 5. 健康检查
-curl -s http://localhost:8002/health | jq .
+curl -s http://localhost:8002/azure_api/health | jq .
 ```
 
 ### Python
@@ -396,7 +396,7 @@ import time
 BASE = "http://localhost:8002"
 
 # 提交任务
-resp = requests.post(f"{BASE}/tts", json={
+resp = requests.post(f"{BASE}/azure_api/tts", json={
     "text": "你好世界，这是一段测试文本。",
     "voice": "zh-CN-XiaochenNeural",
     "rate": "+20%",
@@ -408,7 +408,7 @@ print(f"任务已提交: {task_id}")
 
 # 轮询等待完成
 while True:
-    resp = requests.get(f"{BASE}/tts/{task_id}")
+    resp = requests.get(f"{BASE}/azure_api/tts/{task_id}")
     data = resp.json()
     print(f"状态: {data['status']}")
     if data["status"] in ("completed", "failed"):
@@ -422,7 +422,7 @@ if data["status"] == "completed":
         print(f"  {w['text']}: {w['start_ms']}ms → {w['end_ms']}ms")
 
     # 下载音频
-    audio = requests.get(f"{BASE}/tts/audio/{task_id}")
+    audio = requests.get(f"{BASE}/azure_api/tts/audio/{task_id}")
     with open(f"{task_id}.mp3", "wb") as f:
         f.write(audio.content)
     print(f"音频已保存: {task_id}.mp3")
@@ -437,7 +437,7 @@ const BASE = "http://localhost:8002";
 
 async function synthesize(text, voice = "zh-CN-XiaochenNeural", rate = "+20%") {
   // 1. 提交任务
-  const submitResp = await fetch(`${BASE}/tts`, {
+  const submitResp = await fetch(`${BASE}/azure_api/tts`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ text, voice, rate, mode: "sdk" }),
@@ -448,7 +448,7 @@ async function synthesize(text, voice = "zh-CN-XiaochenNeural", rate = "+20%") {
   // 2. 轮询直到完成
   let task;
   while (true) {
-    const resp = await fetch(`${BASE}/tts/${task_id}`);
+    const resp = await fetch(`${BASE}/azure_api/tts/${task_id}`);
     task = await resp.json();
     console.log(`状态: ${task.status}`);
     if (task.status === "completed" || task.status === "failed") break;

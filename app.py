@@ -3,12 +3,12 @@
 Azure TTS Service — 异步词级时间戳 TTS 微服务。
 
 功能：
-  - POST /tts           提交文本合成任务
-  - GET  /tts/{id}      查询任务状态（含词级时间戳）
-  - GET  /tts/audio/{id} 下载合成 MP3
-  - GET  /tts           任务列表
-  - DELETE /tts/{id}    删除任务
-  - GET  /health        健康检查
+  - POST /azure_api/tts           提交文本合成任务
+  - GET  /azure_api/tts/{id}      查询任务状态（含词级时间戳）
+  - GET  /azure_api/tts/audio/{id} 下载合成 MP3
+  - GET  /azure_api/tts           任务列表
+  - DELETE /azure_api/tts/{id}    删除任务
+  - GET  /azure_api/health        健康检查
 
 模块架构：
   config.py    — 配置（路径、凭证、默认值）
@@ -45,10 +45,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 注册路由（来自 routes.py 的 APIRouter）
-app.include_router(router)
+# 注册路由（来自 routes.py 的 APIRouter），统一挂载在 /azure_api 前缀下
+app.include_router(router, prefix="/azure_api")
 
-# 静态文件托管：前端页面（挂载在 API 路由之后，避免拦截 /tts 等路径）
+# 静态文件托管：前端页面（挂载在 API 路由之后，避免拦截 /azure_api/tts 等路径）
 app.mount("/", StaticFiles(directory="static", html=True), name="static")
 
 

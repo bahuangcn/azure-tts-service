@@ -47,7 +47,7 @@ HTTP 请求 → routes.py (FastAPI) → 任务写入 SQLite → 队列分发
 ## 数据流：一个 TTS 请求的生命周期
 
 ```
-1. POST /tts {"text": "...", "voice": "zh-CN-XiaochenNeural", "rate": "+20%", "mode": "sdk"}
+1. POST /azure_api/tts {"text": "...", "voice": "zh-CN-XiaochenNeural", "rate": "+20%", "mode": "sdk"}
 2. routes.create_tts_task() → 生成 task_id → INSERT tasks (status=pending) → _queue.put(task_id)
 3. worker._worker() 从 _queue.get() 取出 → _synthesize(task_id)
 4. _synthesize:
@@ -57,8 +57,8 @@ HTTP 请求 → routes.py (FastAPI) → 任务写入 SQLite → 队列分发
    d. 收集 word_boundary 回调 → 计算词级时间戳
    e. mutagen 读取 MP3 总时长
    f. UPDATE status=completed, audio_file, word_timings, total_ms
-5. GET /tts/{task_id} → 返回状态 + word_timings + audio_url
-6. GET /tts/audio/{task_id} → FileResponse 返回 MP3
+5. GET /azure_api/tts/{task_id} → 返回状态 + word_timings + audio_url
+6. GET /azure_api/tts/audio/{task_id} → FileResponse 返回 MP3
 ```
 
 ## 环境变量
@@ -106,21 +106,21 @@ uvicorn app:app --host 0.0.0.0 --port 8002
 
 ```bash
 # 提交合成任务
-curl -X POST http://localhost:8002/tts \
+curl -X POST http://localhost:8002/azure_api/tts \
   -H "Content-Type: application/json" \
   -d '{"text": "你好世界", "voice": "zh-CN-XiaochenNeural", "rate": "+20%"}'
 
 # 查询任务状态
-curl http://localhost:8002/tts/{task_id}
+curl http://localhost:8002/azure_api/tts/{task_id}
 
 # 下载音频
-curl -o output.mp3 http://localhost:8002/tts/audio/{task_id}
+curl -o output.mp3 http://localhost:8002/azure_api/tts/audio/{task_id}
 
 # 查看任务列表
-curl http://localhost:8002/tts
+curl http://localhost:8002/azure_api/tts
 
 # 健康检查
-curl http://localhost:8002/health
+curl http://localhost:8002/azure_api/health
 ```
 
 ## API 文档

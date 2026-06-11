@@ -121,7 +121,7 @@ def get_task(task_id: str):
 
     # 完成的任务附加音频下载 URL（相对路径，用 task_id 查询，非 audio_file）
     if d["status"] == "completed":
-        d["audio_url"] = f"/tts/audio/{d['task_id']}"
+        d["audio_url"] = f"/azure_api/tts/audio/{d['task_id']}"
 
     return d
 
