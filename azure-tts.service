@@ -8,7 +8,7 @@ User=root
 WorkingDirectory=/opt/azure-tts-service
 Environment="PATH=/opt/azure-tts-service/venv/bin"
 EnvironmentFile=/opt/azure-tts-service/.env
-ExecStart=/opt/azure-tts-service/venv/bin/uvicorn app:app --host 0.0.0.0 --port 11001
+ExecStart=/opt/azure-tts-service/venv/bin/uvicorn app:app --host 0.0.0.0 --port 12001
 Restart=always
 RestartSec=5
 
