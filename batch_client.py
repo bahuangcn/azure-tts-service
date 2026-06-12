@@ -22,6 +22,7 @@ import time
 import uuid
 import zipfile
 from pathlib import Path
+from xml.sax.saxutils import escape as xml_escape
 
 import mutagen
 import requests
@@ -158,13 +159,21 @@ def submit_batch_job(text: str, voice: str, rate: str) -> dict:
     synthesis_id = f"batch_{uuid.uuid4().hex[:12]}"
     url = f"{_BASE_URL}/texttospeech/batchsyntheses/{synthesis_id}?api-version={BATCH_API_VERSION}"
 
+    # 构建 SSML（用 <prosody rate> 可靠控制语速）
+    # Batch API 的 synthesisConfig.rate 不被所有 API 版本支持，
+    # 且 PlainText 模式下语速控制不可靠，因此统一使用 SSML 输入。
+    ssml = (
+        f'<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis"'
+        f' xml:lang="zh-CN">'
+        f'<voice name="{voice}">'
+        f'<prosody rate="{rate}">{xml_escape(text)}</prosody>'
+        f'</voice></speak>'
+    )
+
     body = {
-        "inputKind": "PlainText",
-        "synthesisConfig": {
-            "voice": voice,
-        },
+        "inputKind": "SSML",
         "inputs": [
-            {"content": text}
+            {"content": ssml}
         ],
         "properties": {
             "outputFormat": "audio-24khz-96kbitrate-mono-mp3",
@@ -176,10 +185,6 @@ def submit_batch_job(text: str, voice: str, rate: str) -> dict:
             "timeToLiveInHours": 168,  # 7 天
         },
     }
-
-    # 语速：仅非空且非默认时设置
-    if rate and rate != "+0%":
-        body["synthesisConfig"]["rate"] = rate
 
     resp = requests.put(url, headers=_headers(), json=body, timeout=30)
     resp.raise_for_status()

@@ -20,6 +20,7 @@ import queue
 import threading
 import traceback
 from pathlib import Path
+from xml.sax.saxutils import escape as xml_escape
 
 import azure.cognitiveservices.speech as speechsdk
 import mutagen
@@ -144,12 +145,9 @@ def _synth_one(text: str, voice: str, rate: str, output_path: str) -> tuple:
     speech_config = speechsdk.SpeechConfig(
         subscription=SPEECH_KEY, region=SPEECH_REGION
     )
-    speech_config.speech_synthesis_voice_name = voice
+    # voice 通过 SSML 指定，不在此处设置（避免覆盖 SSML 中的 voice）
     speech_config.speech_synthesis_output_format = (
         speechsdk.SpeechSynthesisOutputFormat.Audio48Khz192KBitRateMonoMp3
-    )
-    speech_config.set_property(
-        speechsdk.PropertyId.SpeechSynthesisRequest_Rate, rate
     )
 
     audio_config = speechsdk.audio.AudioOutputConfig(filename=output_path)
@@ -157,7 +155,20 @@ def _synth_one(text: str, voice: str, rate: str, output_path: str) -> tuple:
         speech_config=speech_config, audio_config=audio_config
     )
 
-    # ── 2. 注册词边界回调 ──────────────────────────────────────────────
+    # ── 2. 构建 SSML（用 <prosody rate> 控制语速）─────────────────────
+    # 使用 SSML 而非 speak_text_async() + set_property() 的原因：
+    # SpeechSynthesisRequest_Rate 属性通过 set_property 设置后，在
+    # speak_text_async() 中会被静默忽略，只有通过 SSML <prosody rate>
+    # 标签才能可靠地控制语速。
+    ssml = (
+        f'<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis"'
+        f' xml:lang="zh-CN">'
+        f'<voice name="{voice}">'
+        f'<prosody rate="{rate}">{xml_escape(text)}</prosody>'
+        f'</voice></speak>'
+    )
+
+    # ── 3. 注册词边界回调 ──────────────────────────────────────────────
     timings = []
 
     def _on_word_boundary(evt: speechsdk.SpeechSynthesisWordBoundaryEventArgs):
@@ -177,7 +188,7 @@ def _synth_one(text: str, voice: str, rate: str, output_path: str) -> tuple:
 
     synthesizer.synthesis_word_boundary.connect(_on_word_boundary)
 
-    # ── 3. 执行合成（带超时保护）───────────────────────────────────────
+    # ── 4. 执行合成（带超时保护）───────────────────────────────────────
     # Azure SDK 的 ResultFuture.get() 不支持 timeout 参数，用线程 join 超时实现
     synth_result = None
     synth_error = None
@@ -185,7 +196,7 @@ def _synth_one(text: str, voice: str, rate: str, output_path: str) -> tuple:
     def _run_synth():
         nonlocal synth_result, synth_error
         try:
-            synth_result = synthesizer.speak_text_async(text).get()
+            synth_result = synthesizer.speak_ssml_async(ssml).get()
         except Exception as e:
             synth_error = e
 
@@ -205,14 +216,14 @@ def _synth_one(text: str, voice: str, rate: str, output_path: str) -> tuple:
     log.debug(f"合成完成, reason={result.reason}, timings 数量={len(timings)}")
     log.info(f"合成完成: {len(text)} chars, {len(timings)} words")
 
-    # ── 4. 检查合成结果 ────────────────────────────────────────────────
+    # ── 5. 检查合成结果 ────────────────────────────────────────────────
     if result.reason != speechsdk.ResultReason.SynthesizingAudioCompleted:
         cancellation = result.cancellation_details
         raise RuntimeError(
             f"TTS failed: {cancellation.reason} — {cancellation.error_details}"
         )
 
-    # ── 5. 读取音频时长 ────────────────────────────────────────────────
+    # ── 6. 读取音频时长 ────────────────────────────────────────────────
     total_ms = _get_audio_duration(output_path)
 
     # mutagen 解析失败 或 timings 为空时，用词边界时间戳推算
@@ -224,7 +235,7 @@ def _synth_one(text: str, voice: str, rate: str, output_path: str) -> tuple:
         )
         total_ms = last["offset_ms"] + fallback_dur
 
-    # ── 6. 计算词级时间戳 ──────────────────────────────────────────────
+    # ── 7. 计算词级时间戳 ──────────────────────────────────────────────
     word_timings = []
     for i, t in enumerate(timings):
         start = int(t["offset_ms"])

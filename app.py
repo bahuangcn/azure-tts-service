@@ -29,11 +29,10 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from config import MAX_QUEUE_WORKERS, MAX_BATCH_WORKERS
+from config import MAX_QUEUE_WORKERS
 from database import init_db
 from routes import router
 from worker import _worker
-from batch_worker import _batch_worker
 
 # ── FastAPI 应用实例 ──────────────────────────────────────────────────────
 app = FastAPI(title="Azure TTS Service")
@@ -60,24 +59,14 @@ def _start_workers():
 
     SDK 线程：
       - 数量 = MAX_QUEUE_WORKERS（默认 4）
-      - 每个线程运行 _worker()，阻塞在 _queue.get() 等待 SDK 任务
-
-    Batch 线程：
-      - 数量 = MAX_BATCH_WORKERS（默认 2）
-      - 每个线程运行 _batch_worker()，阻塞在 _batch_queue.get() 等待 batch 任务
+      - 每个线程运行 _worker()，阻塞在 _queue.get() 等待任务
 
     所有线程均为 daemon 模式，主进程退出时自动终止。
     """
     init_db()
 
-    # SDK workers
     for _ in range(MAX_QUEUE_WORKERS):
         t = threading.Thread(target=_worker, daemon=True)
-        t.start()
-
-    # Batch workers
-    for _ in range(MAX_BATCH_WORKERS):
-        t = threading.Thread(target=_batch_worker, daemon=True)
         t.start()
 
 
