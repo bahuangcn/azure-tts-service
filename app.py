@@ -27,7 +27,7 @@ import threading
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
+# old web UI removed 2026-08-07 — new UI lives at tools.exnihilo.site/tts (nginx static, webui/index.html)
 
 from config import MAX_QUEUE_WORKERS
 from database import init_db
@@ -49,7 +49,7 @@ app.add_middleware(
 app.include_router(router, prefix="/azure_api")
 
 # 静态文件托管：前端页面（挂载在 API 路由之后，避免拦截 /azure_api/tts 等路径）
-app.mount("/", StaticFiles(directory="static", html=True), name="static")
+# static web UI mount removed 2026-08-07 (old UI deleted; new UI: nginx /var/www/tools.exnihilo.site/tts/)
 
 
 # ── 启动逻辑 ───────────────────────────────────────────────────────────────
