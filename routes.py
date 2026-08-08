@@ -51,6 +51,7 @@ def create_tts_task(
     text: str = Body(...),
     voice: str = Body(default=DEFAULT_VOICE),
     rate: str = Body(default=DEFAULT_RATE),
+    pitch: str = Body(default="+0Hz"),
 ):
     """
     提交文本合成任务，立即返回 task_id。
@@ -59,6 +60,7 @@ def create_tts_task(
       text  — 要合成的文本（必填，不能为空或全空白）
       voice — Azure 语音名称，默认 zh-CN-XiaochenNeural
       rate  — 语速，如 "+20%" "-10%" "1.0"，对应 SSML prosody rate
+      pitch — 音调，如 "+0Hz" "+30Hz" "-30Hz"，对应 SSML prosody pitch（默认 +0Hz）
 
     返回：
       200  {"task_id": "tts_...", "status": "pending"}
@@ -76,9 +78,9 @@ def create_tts_task(
 
     with get_db() as conn:
         conn.execute(
-            "INSERT INTO tasks (task_id, text, voice, rate, mode, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, 'sdk', ?, ?)",
-            (task_id, text, voice, rate, now, now),
+            "INSERT INTO tasks (task_id, text, voice, rate, pitch, mode, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, 'sdk', ?, ?)",
+            (task_id, text, voice, rate, pitch, now, now),
         )
         conn.commit()
 
