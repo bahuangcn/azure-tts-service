@@ -608,7 +608,6 @@ const statusBar = $('statusBar');
 const statusDot = $('statusDot');
 const statusText = $('statusText');
 const statusElapsed = $('statusElapsed');
-const resultPanel = $('resultPanel');
 const emptyState = $('emptyState');
 
 const API_BASE = '/azure_api';
@@ -973,9 +972,7 @@ function submitTask() {
             return res.json();
         })
         .then(data => {
-            resultPanel.innerHTML = '';
-            resultPanel.classList.remove('visible');
-            emptyState.style.display = '';
+            // 提交成功：保持右侧历史列表可见，仅重置提交按钮状态并开始轮询
             submitBtn.innerHTML = '⏳ 合成中…';
             startPolling(data.task_id);
         })
