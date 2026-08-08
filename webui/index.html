@@ -768,7 +768,7 @@ function buildHistoryItem(task, isNewTop) {
     const preview = task.text_preview || task.text?.slice(0, 30) || '';
     const audioBlock = task.status === 'completed'
         ? `<div class="item-audio">
-                <audio controls preload="none" src="${escHtml(audioUrl)}"></audio>
+                <audio controls preload="metadata" src="${escHtml(audioUrl)}"></audio>
                 <a class="btn btn-download" href="${escHtml(audioUrl)}" download="${escHtml(task.task_id)}.mp3">⬇ 下载</a>
            </div>`
         : (task.status === 'failed'
