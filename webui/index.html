@@ -301,6 +301,18 @@ textarea { resize: vertical; min-height: 130px; line-height: 1.7; }
 }
 .item-time { font-size: 11px; color: var(--gray-400); flex-shrink: 0; font-variant-numeric: tabular-nums; }
 
+/* 删除按钮 */
+.btn-delete {
+    background: none; border: none; cursor: pointer;
+    font-size: 13px; line-height: 1;
+    padding: 3px 5px; border-radius: 5px;
+    opacity: .35; flex-shrink: 0;
+    transition: opacity .15s, background .15s;
+}
+.btn-delete:hover { opacity: 1; background: var(--danger-soft); }
+.btn-delete:disabled { opacity: .25; cursor: not-allowed; animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
 /* 列表项：第二行（chips） */
 .item-chips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
 
@@ -781,6 +793,7 @@ function buildHistoryItem(task, isNewTop) {
                 <span class="status-badge ${statusCls}">${escHtml(STATUS_MAP[task.status]?.text || task.status)}</span>
                 <span class="item-text" title="${escHtml(preview)}">${escHtml(preview)}</span>
                 <span class="item-time">${formatTime(task.created_at)}</span>
+                <button class="btn-delete" title="删除此记录" data-action="delete">🗑</button>
             </div>
             <div class="item-chips">${chips.join('')}</div>
             ${audioBlock}
@@ -790,6 +803,33 @@ function buildHistoryItem(task, isNewTop) {
             </details>
         </div>`;
 }
+
+// ── 删除记录（事件委托）───────────────────────────────────────
+async function deleteTask(taskId, btn) {
+    if (!confirm('确定删除这条记录吗？\n将同时删除音频文件，不可恢复。')) return;
+
+    btn.disabled = true;   // 触发旋转动画
+    try {
+        const res = await fetch(API_BASE + '/tts/' + taskId, { method: 'DELETE' });
+        if (!res.ok) {
+            const e = await res.json().catch(() => ({}));
+            throw new Error(e.detail || 'HTTP ' + res.status);
+        }
+        loadHistory();     // 删除成功 → 刷新列表
+    } catch (err) {
+        alert('删除失败：' + err.message);
+        btn.disabled = false;
+    }
+}
+
+document.addEventListener('click', e => {
+    const btn = e.target.closest('[data-action="delete"]');
+    if (!btn) return;
+    const item = btn.closest('.history-item');
+    if (!item) return;
+    e.preventDefault();
+    deleteTask(item.dataset.taskId, btn);
+});
 
 // ── 详情懒加载：展开时才请求单条完整数据 ────────────────────────
 document.addEventListener('toggle', e => {
