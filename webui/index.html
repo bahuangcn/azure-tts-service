@@ -754,7 +754,8 @@ function renderHistoryList(tasks) {
 
 function buildHistoryItem(task, isNewTop) {
     const statusCls = ['pending', 'processing', 'completed', 'failed'].includes(task.status) ? task.status : '';
-    const audioUrl = task.audio_url || (API_BASE + '/tts/audio/' + (task.audio_file || task.task_id));
+    // 音频 URL：优先 audio_url；否则用纯 task_id 拼（audio_file 带 .mp3 后缀，后端 /audio/{task_id} 不认，会 404）
+    const audioUrl = task.audio_url || (API_BASE + '/tts/audio/' + task.task_id);
 
     const chips = [
         `<span class="chip">${escHtml(task.voice || '—')}</span>`,
