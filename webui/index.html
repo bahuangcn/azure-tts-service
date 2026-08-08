@@ -244,6 +244,104 @@ textarea { resize: vertical; min-height: 130px; line-height: 1.7; }
 .result-panel { display: none; }
 .result-panel.visible { display: block; }
 
+/* 历史列表头部 */
+.history-header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 12px;
+}
+.history-title { font-size: 15px; font-weight: 650; color: var(--gray-800); }
+.history-title .hint { font-size: 12px; font-weight: 400; color: var(--gray-400); margin-left: 6px; }
+.btn-refresh {
+    background: var(--gray-100); color: var(--gray-600);
+    border: 1px solid var(--gray-200);
+    font-size: 12px; font-weight: 550;
+    padding: 5px 12px; border-radius: var(--radius-sm);
+    cursor: pointer;
+}
+.btn-refresh:hover { background: var(--gray-200); }
+.btn-refresh.loading { opacity: .6; pointer-events: none; }
+
+/* 历史列表 */
+.history-list {
+    display: flex; flex-direction: column; gap: 10px;
+    max-height: calc(100vh - 190px);
+    overflow-y: auto;
+    padding-right: 4px;
+}
+.history-item {
+    border: 1px solid var(--gray-200);
+    border-radius: var(--radius);
+    background: #fff;
+    padding: 12px 14px;
+    box-shadow: 0 1px 2px rgb(0 0 0 / .03);
+}
+.history-item.highlight {
+    animation: itemHighlight 2.2s ease-out;
+}
+@keyframes itemHighlight {
+    0% { background: #fff7e0; border-color: #ffd666; }
+    100% { background: #fff; border-color: var(--gray-200); }
+}
+
+/* 列表项：第一行（状态 + 摘要 + 时间） */
+.item-top { display: flex; align-items: center; gap: 10px; }
+.status-badge {
+    font-size: 11px; font-weight: 600;
+    padding: 2px 8px; border-radius: 99px;
+    flex-shrink: 0; white-space: nowrap;
+}
+.status-badge.completed { background: var(--success-soft); color: var(--success); }
+.status-badge.processing { background: #fff3e0; color: var(--warning); }
+.status-badge.pending    { background: var(--gray-100); color: var(--gray-500); }
+.status-badge.failed     { background: var(--danger-soft); color: var(--danger); }
+.item-text {
+    flex: 1; min-width: 0;
+    font-size: 13px; font-weight: 550; color: var(--gray-800);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.item-time { font-size: 11px; color: var(--gray-400); flex-shrink: 0; font-variant-numeric: tabular-nums; }
+
+/* 列表项：第二行（chips） */
+.item-chips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+
+/* 列表项：第三行（播放器 + 下载） */
+.item-audio {
+    display: flex; align-items: center; gap: 12px;
+    margin-top: 10px;
+    padding: 10px 12px;
+    background: var(--gray-50);
+    border: 1px solid var(--gray-200);
+    border-radius: var(--radius-sm);
+    flex-wrap: wrap;
+}
+.item-audio audio { flex: 1; min-width: 200px; height: 34px; }
+
+/* 列表项：折叠详情 */
+.item-details { margin-top: 10px; }
+.item-details summary {
+    cursor: pointer; user-select: none;
+    font-size: 12px; font-weight: 550; color: var(--primary);
+    padding: 6px 0; list-style: none;
+}
+.item-details summary::-webkit-details-marker { display: none; }
+.item-details summary::before { content: '▸ '; }
+.item-details[open] summary::before { content: '▾ '; }
+.item-details summary:hover { color: var(--primary-hover); }
+.item-details .details-body { margin-top: 8px; display: flex; flex-direction: column; gap: 10px; }
+.details-loading { color: var(--gray-400); font-size: 12px; padding: 12px 0; text-align: center; }
+.details-card {
+    border: 1px solid var(--gray-200);
+    border-radius: var(--radius-sm);
+    padding: 12px 14px;
+    background: #fff;
+}
+.details-card-title {
+    font-size: 12.5px; font-weight: 650; color: var(--gray-700);
+    margin-bottom: 10px;
+    display: flex; align-items: center; gap: 6px;
+}
+.details-card-title .hint { font-size: 11px; font-weight: 400; color: var(--gray-400); margin-left: auto; }
+
 .empty-state {
     display: flex; flex-direction: column;
     align-items: center; justify-content: center;
@@ -463,11 +561,16 @@ textarea { resize: vertical; min-height: 130px; line-height: 1.7; }
         </div>
     </aside>
 
-    <!-- ── 右：结果面板 ── -->
-    <section class="result-panel" id="resultPanel">
+    <!-- ── 右：历史结果列表 ── -->
+    <section class="result-panel visible" id="resultPanel">
+        <div class="history-header">
+            <div class="history-title">📋 历史结果 <span class="hint" id="historyCount"></span></div>
+            <button class="btn btn-refresh" id="refreshBtn" title="刷新列表">↻ 刷新</button>
+        </div>
+        <div class="history-list" id="historyList"></div>
         <div class="empty-state" id="emptyState">
             <div class="icon">🎧</div>
-            <p>输入文本，点击「开始合成」<br>或按 <span class="kbd">Ctrl</span> + <span class="kbd">Enter</span><br>结果将在此展示</p>
+            <p>暂无合成记录<br>输入文本，点击「开始合成」<br>或按 <span class="kbd">Ctrl</span> + <span class="kbd">Enter</span><br>历史结果将在此展示</p>
         </div>
     </section>
 
@@ -602,11 +705,116 @@ function escHtml(s) {
     return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-// ── 结果面板 ────────────────────────────────────────────────────
-function buildResultPanel(task) {
-    const audios = task.audio_url || (API_BASE + '/tts/audio/' + (task.audio_file || task.task_id));
+// ── 历史结果列表 ────────────────────────────────────────────────
+let lastTopTaskId = null;   // 用于检测新任务高亮
 
-    let timingsHtml = '<div class="no-timings">无词级时间戳数据</div>';
+function formatTime(iso) {
+    if (!iso) return '—';
+    const d = new Date(iso);
+    if (isNaN(d)) return iso;
+    const pad = n => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+function loadHistory() {
+    const refreshBtn = $('refreshBtn');
+    if (refreshBtn) refreshBtn.classList.add('loading');
+    fetch(API_BASE + '/tts?limit=50')
+        .then(res => { if (!res.ok) throw new Error('HTTP ' + res.status); return res.json(); })
+        .then(tasks => renderHistoryList(tasks))
+        .catch(err => console.error('加载历史失败:', err))
+        .finally(() => { if (refreshBtn) refreshBtn.classList.remove('loading'); });
+}
+
+function renderHistoryList(tasks) {
+    const list = $('historyList');
+    const count = $('historyCount');
+    const empty = $('emptyState');
+    if (!list) return;
+
+    if (!tasks || tasks.length === 0) {
+        list.innerHTML = '';
+        count.textContent = '';
+        empty.style.display = '';
+        return;
+    }
+
+    // 新任务检测：最新一条 task_id 变化 → 高亮
+    const newTopId = tasks[0].task_id;
+    const isNewTop = lastTopTaskId !== null && newTopId !== lastTopTaskId;
+    lastTopTaskId = newTopId;
+
+    count.textContent = `最近 ${tasks.length} 条`;
+    empty.style.display = 'none';
+    list.innerHTML = tasks.map(t => buildHistoryItem(t, isNewTop)).join('');
+
+    // 若新任务在顶部，滚动到顶部
+    if (isNewTop) list.scrollTop = 0;
+}
+
+function buildHistoryItem(task, isNewTop) {
+    const statusCls = ['pending', 'processing', 'completed', 'failed'].includes(task.status) ? task.status : '';
+    const audioUrl = task.audio_url || (API_BASE + '/tts/audio/' + (task.audio_file || task.task_id));
+
+    const chips = [
+        `<span class="chip">${escHtml(task.voice || '—')}</span>`,
+        `<span class="chip dark">语速 ${escHtml(task.rate || '+20%')}</span>`,
+    ];
+    if (task.pitch) chips.push(`<span class="chip dark">音调 ${escHtml(task.pitch)}</span>`);
+    if (task.total_ms != null) chips.push(`<span class="chip dark">${(task.total_ms / 1000).toFixed(1)}s</span>`);
+    if (task.word_count != null) chips.push(`<span class="chip dark">${task.word_count} 词</span>`);
+
+    const preview = task.text_preview || task.text?.slice(0, 30) || '';
+    const audioBlock = task.status === 'completed'
+        ? `<div class="item-audio">
+                <audio controls preload="none" src="${escHtml(audioUrl)}"></audio>
+                <a class="btn btn-download" href="${escHtml(audioUrl)}" download="${escHtml(task.task_id)}.mp3">⬇ 下载</a>
+           </div>`
+        : (task.status === 'failed'
+            ? `<div class="item-audio" style="color:var(--danger);font-size:12px">⚠ ${escHtml(task.error || '合成失败')}</div>`
+            : '');
+
+    return `
+        <div class="history-item${isNewTop ? ' highlight' : ''}" data-task-id="${escHtml(task.task_id)}">
+            <div class="item-top">
+                <span class="status-badge ${statusCls}">${escHtml(STATUS_MAP[task.status]?.text || task.status)}</span>
+                <span class="item-text" title="${escHtml(preview)}">${escHtml(preview)}</span>
+                <span class="item-time">${formatTime(task.created_at)}</span>
+            </div>
+            <div class="item-chips">${chips.join('')}</div>
+            ${audioBlock}
+            <details class="item-details" data-task-id="${escHtml(task.task_id)}">
+                <summary>词级时间戳 · 任务详情 · SDK 完整返回</summary>
+                <div class="details-body"><div class="details-loading">加载中…</div></div>
+            </details>
+        </div>`;
+}
+
+// ── 详情懒加载：展开时才请求单条完整数据 ────────────────────────
+document.addEventListener('toggle', e => {
+    const details = e.target;
+    if (details.tagName !== 'DETAILS' || !details.open || !details.classList.contains('item-details')) return;
+    if (details.dataset.loaded === '1') return;
+
+    const taskId = details.dataset.taskId;
+    if (!taskId) return;
+
+    fetch(API_BASE + '/tts/' + taskId)
+        .then(res => { if (!res.ok) throw new Error('HTTP ' + res.status); return res.json(); })
+        .then(task => {
+            details.dataset.loaded = '1';
+            details.querySelector('.details-body').innerHTML = buildDetailCards(task);
+        })
+        .catch(err => {
+            details.querySelector('.details-body').innerHTML =
+                `<div class="details-loading">加载失败：${escHtml(err.message)}</div>`;
+        });
+});
+
+function buildDetailCards(task) {
+    let cards = '';
+
+    // 1) 词级时间戳
     if (task.word_timings && task.word_timings.length > 0) {
         const rows = task.word_timings.map((w, i) => `
             <tr>
@@ -616,61 +824,56 @@ function buildResultPanel(task) {
                 <td class="time-cell">${w.end_ms}</td>
                 <td class="duration-cell">${w.end_ms - w.start_ms}</td>
             </tr>`).join('');
-        timingsHtml = `
-            <div class="timings-scroll">
-                <table class="timings-table">
-                    <thead><tr><th>#</th><th>文本</th><th>开始</th><th>结束</th><th>持续</th></tr></thead>
-                    <tbody>${rows}</tbody>
-                </table>
+        cards += `
+            <div class="details-card">
+                <div class="details-card-title"><span>⏱️</span> 词级时间戳
+                    <span class="hint">${task.word_timings.length} 个词</span></div>
+                <div class="timings-scroll">
+                    <table class="timings-table">
+                        <thead><tr><th>#</th><th>文本</th><th>开始</th><th>结束</th><th>持续</th></tr></thead>
+                        <tbody>${rows}</tbody>
+                    </table>
+                </div>
+            </div>`;
+    } else {
+        cards += `
+            <div class="details-card">
+                <div class="details-card-title"><span>⏱️</span> 词级时间戳</div>
+                <div class="no-timings">无词级时间戳数据</div>
             </div>`;
     }
 
-    const chips = [
-        `<span class="chip">${escHtml(task.voice)}</span>`,
-        `<span class="chip dark">语速 ${escHtml(task.rate || '+20%')}</span>`,
-    ];
-    if (task.pitch) chips.push(`<span class="chip dark">音调 ${escHtml(task.pitch)}</span>`);
+    // 2) 任务详情
+    const meta = [
+        ['任务 ID', task.task_id],
+        ['状态', task.status],
+        ['发音人', task.voice],
+        ['语速', task.rate],
+        ['音调', task.pitch || '+0Hz'],
+        ['总时长', task.total_ms != null ? task.total_ms + ' ms' : '—'],
+        ['词数', task.word_count != null ? task.word_count : (task.word_timings ? task.word_timings.length : '—')],
+        ['创建时间', task.created_at || '—'],
+        ['更新时间', task.updated_at || '—'],
+        ['模式', task.mode || '—'],
+    ].map(([k, v]) => `
+        <div class="meta-item">
+            <span class="meta-label">${escHtml(k)}</span>
+            <span class="meta-value ${k === '任务 ID' ? 'mono' : ''}">${escHtml(v ?? '—')}</span>
+        </div>`).join('');
+    cards += `
+        <div class="details-card">
+            <div class="details-card-title"><span>📋</span> 任务详情</div>
+            <div class="meta-grid">${meta}</div>
+        </div>`;
 
-    resultPanel.innerHTML = `
-        <div class="card">
-            <div class="card-title"><span class="icon">🔊</span> 音频播放
-                <span class="hint">${task.total_ms != null ? '总时长 ' + (task.total_ms / 1000).toFixed(1) + 's' : ''}</span>
-            </div>
-            <div class="audio-section">
-                <audio controls src="${escHtml(audios)}"></audio>
-                <a class="btn btn-download" href="${escHtml(audios)}" download="${escHtml(task.task_id)}.mp3">⬇ 下载 MP3</a>
-            </div>
-            <div class="chips">${chips.join('')}</div>
-        </div>
-
-        <div class="card">
-            <div class="card-title"><span class="icon">⏱️</span> 词级时间戳
-                <span class="hint">${task.word_timings ? task.word_timings.length + ' 个词' : '—'}</span>
-            </div>
-            ${timingsHtml}
-        </div>
-
-        <div class="card">
-            <div class="card-title"><span class="icon">📋</span> 任务详情</div>
-            <div class="meta-grid">
-                <div class="meta-item"><span class="meta-label">任务 ID</span><span class="meta-value mono">${escHtml(task.task_id)}</span></div>
-                <div class="meta-item"><span class="meta-label">状态</span><span class="meta-value" style="color:var(--success)">${escHtml(task.status)}</span></div>
-                <div class="meta-item"><span class="meta-label">发音人</span><span class="meta-value">${escHtml(task.voice)}</span></div>
-                <div class="meta-item"><span class="meta-label">语速</span><span class="meta-value">${escHtml(task.rate)}</span></div>
-                <div class="meta-item"><span class="meta-label">音调</span><span class="meta-value">${escHtml(task.pitch || '+0Hz')}</span></div>
-                <div class="meta-item"><span class="meta-label">总时长</span><span class="meta-value">${task.total_ms != null ? task.total_ms + ' ms' : '—'}</span></div>
-                <div class="meta-item"><span class="meta-label">创建时间</span><span class="meta-value">${escHtml(task.created_at || '—')}</span></div>
-                <div class="meta-item"><span class="meta-label">更新时间</span><span class="meta-value">${escHtml(task.updated_at || '—')}</span></div>
-            </div>
-        </div>
-
-        <div class="card">
-            <div class="card-title"><span class="icon">🧾</span> SDK 完整返回</div>
+    // 3) SDK 完整返回
+    cards += `
+        <div class="details-card">
+            <div class="details-card-title"><span>🧾</span> SDK 完整返回</div>
             <div class="json-block">${syntaxHighlight(task)}</div>
         </div>`;
 
-    resultPanel.classList.add('visible');
-    emptyState.style.display = 'none';
+    return cards;
 }
 
 // ── 轮询 ────────────────────────────────────────────────────────
@@ -692,7 +895,12 @@ function startPolling(taskId) {
                     pollTimer = null;
                     submitBtn.disabled = false;
                     submitBtn.innerHTML = '🎤 开始合成';
-                    buildResultPanel(task);
+                    // 合成结束 → 刷新历史列表（新任务自动置顶高亮）
+                    loadHistory();
+                    if (task.status === 'failed') {
+                        statusText.textContent = '失败：' + (task.error || '未知错误');
+                        statusText.className = 'status-text failed';
+                    }
                 }
             })
             .catch(err => console.error('轮询失败:', err));
@@ -745,6 +953,13 @@ textInput.addEventListener('keydown', e => {
 // ── 初始化 ──────────────────────────────────────────────────────
 checkHealth();
 setInterval(checkHealth, 30000);
+
+// 刷新按钮
+const refreshBtn = $('refreshBtn');
+if (refreshBtn) refreshBtn.addEventListener('click', loadHistory);
+
+// 页面加载时拉取历史结果列表
+loadHistory();
 </script>
 </body>
 </html>

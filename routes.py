@@ -27,17 +27,20 @@ router = APIRouter()
 # ── 响应工具函数 ────────────────────────────────────────────────────────────
 def _task_to_dict(row: sqlite3.Row) -> dict:
     """
-    将 sqlite3.Row 转为普通 dict，并处理特殊字段。
+    将 sqlite3.Row 转为普通 dict，并处理特殊字段（列表接口专用）。
 
     特殊处理：
-      - word_timings：从 JSON 字符串解析为 list[dict]
-      - text：删除，不在列表接口中暴露用户原始文本（隐私 + 减少响应体积）
+      - word_timings：改为返回 word_count（词数），完整数组仅在单任务查询中返回
+      - text：改为 text_preview（前 30 字摘要），原始文本仅在单任务查询中返回
 
     仅在 list_tasks 中使用，get_task 使用内联解析以保留完整字段。
     """
     d = dict(row)
     if d.get("word_timings"):
-        d["word_timings"] = json.loads(d["word_timings"])
+        d["word_count"] = len(json.loads(d["word_timings"]))
+    d.pop("word_timings", None)
+    text = d.get("text") or ""
+    d["text_preview"] = text[:30]
     d.pop("text", None)
     return d
 
@@ -190,7 +193,8 @@ def list_tasks(limit: int = 50):
       limit — 最大返回条数，默认 50
 
     返回：
-      list[dict]，每个元素不含 text 字段（原始文本仅在单任务查询中返回）
+      list[dict]，每个元素含 text_preview（前 30 字摘要）和 word_count（词数），
+      不含完整 text / word_timings（仅在单任务查询中返回）
     """
     with get_db() as conn:
         rows = conn.execute(
