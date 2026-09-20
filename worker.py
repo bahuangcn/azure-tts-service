@@ -20,7 +20,7 @@ import queue
 import threading
 import traceback
 from pathlib import Path
-from xml.sax.saxutils import escape as xml_escape
+from xml.sax.saxutils import escape as xml_escape, quoteattr
 
 import azure.cognitiveservices.speech as speechsdk
 import mutagen
@@ -123,7 +123,7 @@ def _get_audio_duration(audio_path: str) -> int | None:
 
 
 # ── 单次合成 ───────────────────────────────────────────────────────────────
-def _synth_one(text: str, voice: str, rate: str, output_path: str) -> tuple:
+def _synth_one(text: str, voice: str, rate: str, output_path: str, pitch: str = "+0Hz") -> tuple:
     """
     对单段文本执行一次 SDK 合成，返回 (word_timings, total_ms)。
 
@@ -163,8 +163,8 @@ def _synth_one(text: str, voice: str, rate: str, output_path: str) -> tuple:
     ssml = (
         f'<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis"'
         f' xml:lang="zh-CN">'
-        f'<voice name="{voice}">'
-        f'<prosody rate="{rate}">{xml_escape(text)}</prosody>'
+        f'<voice name={quoteattr(voice)}>'
+        f'<prosody rate={quoteattr(rate)} pitch={quoteattr(pitch)}>{xml_escape(text)}</prosody>'
         f'</voice></speak>'
     )
 
@@ -335,6 +335,11 @@ def _synthesize(task_id: str):
 
     # ── 2. 更新状态 ────────────────────────────────────────────────────
     _mark_status(task_id, "processing")
+
+    if task.get("options"):
+        from synthesis import synthesize_story
+        synthesize_story(task)
+        return
 
     voice = task["voice"]
     rate = task["rate"]

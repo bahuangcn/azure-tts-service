@@ -49,6 +49,12 @@ def init_db():
 
     # ── 迁移：为 batch synthesis 增加列（幂等，已存在则跳过）──────────────
     migrations = [
+        ("pitch", "TEXT NOT NULL DEFAULT '+0Hz'"),
+        ("provider", "TEXT NOT NULL DEFAULT 'azure'"),
+        ("owner", "TEXT"),
+        ("options", "TEXT"),
+        ("sentence_timings", "TEXT"),
+        ("metadata", "TEXT"),
         ("mode",          "TEXT NOT NULL DEFAULT 'sdk'"),
         ("synthesis_id",  "TEXT"),
         ("azure_status",  "TEXT"),
@@ -63,8 +69,8 @@ def init_db():
     # 存量数据回填：确保现有行 mode = 'sdk'
     conn.execute("UPDATE tasks SET mode = 'sdk' WHERE mode IS NULL")
     conn.commit()
-
-    return conn
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.close()
 
 
 @contextmanager

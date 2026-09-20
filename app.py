@@ -29,7 +29,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 # old web UI removed 2026-08-07 — new UI lives at tools.exnihilo.site/tts (nginx static, webui/index.html)
 
-from config import MAX_QUEUE_WORKERS
+from config import MAX_QUEUE_WORKERS, CORS_ORIGINS
 from database import init_db
 from routes import router
 from worker import _worker
@@ -40,13 +40,14 @@ app = FastAPI(title="Azure TTS Service")
 # CORS 跨域：允许浏览器从任意来源调用 API
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=CORS_ORIGINS,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # 注册路由（来自 routes.py 的 APIRouter），统一挂载在 /azure_api 前缀下
 app.include_router(router, prefix="/azure_api")
+app.include_router(router, prefix="/api/v1", tags=["Baby Story Creator"])
 
 # 静态文件托管：前端页面（挂载在 API 路由之后，避免拦截 /azure_api/tts 等路径）
 # static web UI mount removed 2026-08-07 (old UI deleted; new UI: nginx /var/www/tools.exnihilo.site/tts/)
@@ -64,6 +65,15 @@ def _start_workers():
     所有线程均为 daemon 模式，主进程退出时自动终止。
     """
     init_db()
+    from database import get_db
+    from worker import _queue
+    with get_db() as conn:
+        # Never automatically rebill synthesis interrupted by a restart.
+        conn.execute("UPDATE tasks SET status='failed', error='Service restarted during synthesis; submit a new task' WHERE status='processing'")
+        pending = conn.execute("SELECT task_id FROM tasks WHERE status='pending'").fetchall()
+        conn.commit()
+    for row in pending:
+        _queue.put(row['task_id'])
 
     for _ in range(MAX_QUEUE_WORKERS):
         t = threading.Thread(target=_worker, daemon=True)

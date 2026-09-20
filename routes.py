@@ -1,260 +1,150 @@
-"""
-FastAPI 路由定义：TTS 任务的 CRUD + 音频下载 + 健康检查。
-
-使用 APIRouter 而非直接 @app 装饰器：
-  - 避免 routes.py ↔ app.py 循环导入
-  - app.py 通过 app.include_router(router) 注册所有路由
-"""
+"""Authenticated, owner-scoped TTS API shared by legacy UI and Baby Story."""
 import json
-import traceback
 import uuid
-import sqlite3
-from datetime import datetime
-
-from fastapi import APIRouter, HTTPException, Body
+from datetime import datetime, timezone
+from typing import Literal
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse, Response
-
-from config import DEFAULT_VOICE, DEFAULT_RATE, AUDIO_DIR
+from pydantic import BaseModel, Field, model_validator
+from config import DEFAULT_VOICE, AUDIO_DIR, MAX_PENDING, SPEECH_KEY, MINIMAX_API_KEY
 from database import get_db
 from worker import _queue
-from logger import get_logger
-
-log = get_logger(__name__)
+from providers import voice_catalog
+from security import authenticate, limit_submission
+from synthesis import sentences as split_sentences, subtitles
 
 router = APIRouter()
 
+class SynthesisRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=20000)
+    provider: Literal['azure', 'minimax'] = 'azure'
+    voice: str = Field(default=DEFAULT_VOICE, min_length=1, max_length=200)
+    rate: str = Field(default='+20%', pattern=r'^(?:[+-]?\d{1,3}%|[0-2](?:\.\d{1,2})?)$')
+    pitch: str = Field(default='+0Hz', pattern=r'^[+-]?\d{1,3}(?:Hz|%)$')
+    speed: float = Field(default=1, ge=0.5, le=2)
+    minimax_pitch: int = Field(default=0, ge=-12, le=12)
+    model: Literal['speech-2.8-hd', 'speech-2.8-turbo', 'speech-2.6-hd', 'speech-2.6-turbo', 'speech-02-hd', 'speech-02-turbo'] | None = None
+    sentences: list[str] | None = Field(default=None, min_length=1, max_length=200)
 
-# ── 响应工具函数 ────────────────────────────────────────────────────────────
-def _task_to_dict(row: sqlite3.Row) -> dict:
-    """
-    将 sqlite3.Row 转为普通 dict，并处理特殊字段（列表接口专用）。
+    @model_validator(mode='after')
+    def validate_segments(self):
+        parts = self.sentences or split_sentences(self.text)
+        if not self.text.strip() or not parts or any(not p.strip() or len(p) > 3000 for p in parts):
+            raise ValueError('Text and sentences must be nonempty; each sentence must be at most 3000 characters')
+        if len(parts) > 200 or sum(map(len, parts)) > 20000:
+            raise ValueError('At most 200 sentences and 20000 characters are allowed')
+        if self.sentences and ''.join(self.text.split()) != ''.join(''.join(parts).split()):
+            raise ValueError('sentences must reproduce text (ignoring whitespace)')
+        return self
 
-    特殊处理：
-      - word_timings：改为返回 word_count（词数），完整数组仅在单任务查询中返回
-      - text：改为 text_preview（前 30 字摘要），原始文本仅在单任务查询中返回
-
-    仅在 list_tasks 中使用，get_task 使用内联解析以保留完整字段。
-    """
-    d = dict(row)
-    if d.get("word_timings"):
-        d["word_count"] = len(json.loads(d["word_timings"]))
-    d.pop("word_timings", None)
-    text = d.get("text") or ""
-    d["text_preview"] = text[:30]
-    d.pop("text", None)
-    return d
-
-
-# ── 端点：提交 TTS 任务 ────────────────────────────────────────────────────
-@router.post("/tts")
-def create_tts_task(
-    text: str = Body(...),
-    voice: str = Body(default=DEFAULT_VOICE),
-    rate: str = Body(default=DEFAULT_RATE),
-    pitch: str = Body(default="+0Hz"),
-):
-    """
-    提交文本合成任务，立即返回 task_id。
-
-    请求体 (JSON)：
-      text  — 要合成的文本（必填，不能为空或全空白）
-      voice — Azure 语音名称，默认 zh-CN-XiaochenNeural
-      rate  — 语速，如 "+20%" "-10%" "1.0"，对应 SSML prosody rate
-      pitch — 音调，如 "+0Hz" "+30Hz" "-30Hz"，对应 SSML prosody pitch（默认 +0Hz）
-
-    返回：
-      200  {"task_id": "tts_...", "status": "pending"}
-      400  text 为空时
-
-    流程：
-      DB 写入 pending 任务 → 入队 → 立即返回
-    """
-    if not text.strip():
-        raise HTTPException(400, "text is empty")
-
-    # 生成唯一任务 ID（tts_ + 12 位 hex）
-    task_id = f"tts_{uuid.uuid4().hex[:12]}"
-    now = datetime.utcnow().isoformat()
-
+def owned(task_id, client):
     with get_db() as conn:
-        conn.execute(
-            "INSERT INTO tasks (task_id, text, voice, rate, pitch, mode, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, 'sdk', ?, ?)",
-            (task_id, text, voice, rate, pitch, now, now),
-        )
-        conn.commit()
-
-    _queue.put(task_id)
-
-    return {"task_id": task_id, "status": "pending"}
-
-
-# ── 端点：查询任务详情 ──────────────────────────────────────────────────────
-@router.get("/tts/{task_id}")
-def get_task(task_id: str):
-    """
-    查询单个任务的状态和结果。
-
-    返回字段：
-      task_id, status, voice, rate, created_at, updated_at,
-      error（仅 failed 时）,
-      word_timings（仅 completed 时，list[{"text","start_ms","end_ms"}]）,
-      audio_url（仅 completed 时，"/tts/audio/{task_id}"）,
-      text（原始文本，单任务查询中返回，列表查询隐藏）
-
-    状态枚举：pending → processing → completed | failed
-    """
-    with get_db() as conn:
-        row = conn.execute(
-            "SELECT * FROM tasks WHERE task_id = ?", (task_id,)
-        ).fetchone()
+        row = conn.execute('SELECT * FROM tasks WHERE task_id=? AND owner=?', (task_id, client)).fetchone()
     if not row:
-        raise HTTPException(404, "task not found")
+        raise HTTPException(404, 'task not found')
+    return dict(row)
 
-    d = dict(row)
+def present(task):
+    for key in ('word_timings', 'sentence_timings', 'metadata'):
+        task[key] = json.loads(task[key]) if task.get(key) else None
+    for key in ('owner', 'options', 'audio_file', 'result_url'):
+        task.pop(key, None)
+    if task['status'] == 'completed':
+        base = f'/azure_api/tts/{task["task_id"]}'
+        task.update(audio_url=f'/azure_api/tts/audio/{task["task_id"]}', timing_url=base+'/timing',
+                    subtitles={'srt': base+'/subtitles.srt', 'vtt': base+'/subtitles.vtt'},
+                    duration_ms=task['total_ms'])
+    return task
 
-    # JSON 字符串 → Python 对象
-    if d.get("word_timings"):
-        d["word_timings"] = json.loads(d["word_timings"])
-
-    # 完成的任务附加下载 URL（相对路径）
-    if d["status"] == "completed":
-        d["audio_url"] = f"/azure_api/tts/audio/{d['task_id']}"
-        d["timing_url"] = f"/azure_api/tts/{d['task_id']}/timing"
-
-    return d
-
-
-# ── 端点：下载音频文件 ──────────────────────────────────────────────────────
-@router.get("/tts/audio/{task_id}")
-def download_audio(task_id: str):
-    """
-    下载已完成任务的 MP3 音频文件。
-
-    返回：
-      200  application/octet-stream 响应（FileResponse）
-      404  任务不存在 / 未完成 / 音频文件被删除
-
-    注意：
-      下载路径使用 task_id 而非文件名，避免暴露内部命名规则。
-    """
-    with get_db() as conn:
-        row = conn.execute(
-            "SELECT audio_file FROM tasks WHERE task_id = ?", (task_id,)
-        ).fetchone()
-
-    # 任务不存在 或 尚未完成（audio_file 为 NULL）
-    if not row or not row["audio_file"]:
-        raise HTTPException(404, "audio not found")
-
-    filepath = AUDIO_DIR / row["audio_file"]
-    if not filepath.exists():
-        raise HTTPException(404, "audio file missing on disk")
-
-    return FileResponse(str(filepath), media_type="audio/mpeg")
-
-
-# ── 端点：下载词级时间戳文件 ──────────────────────────────────────────────────
-@router.get("/tts/{task_id}/timing")
-def download_timing(task_id: str):
-    """
-    下载已完成任务的词级时间戳 JSON 文件。
-
-    返回：
-      200  application/json，Content-Disposition: attachment
-      404  任务不存在 / 未完成（word_timings 为 NULL）
-
-    与 audio 下载不同：timing 数据来自 DB JSON 列而非磁盘文件，
-    因此不依赖 FileResponse，直接构造 Response 返回。
-    """
-    with get_db() as conn:
-        row = conn.execute(
-            "SELECT word_timings FROM tasks WHERE task_id = ?", (task_id,)
-        ).fetchone()
-
-    # 任务不存在 或 尚未完成（word_timings 为 NULL）
-    if not row or not row["word_timings"]:
-        raise HTTPException(404, "timing not found")
-
-    return Response(
-        content=row["word_timings"],
-        media_type="application/json",
-        headers={
-            "Content-Disposition": f'attachment; filename="{task_id}_timing.json"'
-        },
-    )
-
-
-# ── 端点：任务列表 ──────────────────────────────────────────────────────────
-@router.get("/tts")
-def list_tasks(limit: int = 50):
-    """
-    获取最近的任务列表（按创建时间倒序）。
-
-    参数：
-      limit — 最大返回条数，默认 50
-
-    返回：
-      list[dict]，每个元素含 text_preview（前 30 字摘要）和 word_count（词数），
-      不含完整 text / word_timings（仅在单任务查询中返回）
-    """
-    with get_db() as conn:
-        rows = conn.execute(
-            "SELECT * FROM tasks ORDER BY created_at DESC LIMIT ?", (limit,)
-        ).fetchall()
-    return [_task_to_dict(r) for r in rows]
-
-
-# ── 端点：删除任务 ──────────────────────────────────────────────────────────
-@router.delete("/tts/{task_id}")
-def delete_task(task_id: str):
-    """
-    删除任务及其音频文件。
-
-    操作：
-      1. 如任务有音频文件，从磁盘删除（文件不存在不报错）
-      2. 从 DB 删除任务记录
-
-    返回：
-      200  {"status": "deleted"}
-      404  任务不存在
-    """
-    with get_db() as conn:
-        row = conn.execute(
-            "SELECT audio_file FROM tasks WHERE task_id = ?", (task_id,)
-        ).fetchone()
-
-        if not row:
-            raise HTTPException(404, "task not found")
-
-        # 删除磁盘上的音频文件
-        if row["audio_file"]:
-            try:
-                (AUDIO_DIR / row["audio_file"]).unlink(missing_ok=True)
-            except OSError:
-                log.warning(f"删除音频文件失败: {traceback.format_exc()}")
-
-        # 删除数据库记录
-        conn.execute("DELETE FROM tasks WHERE task_id = ?", (task_id,))
-        conn.commit()
-
-    return {"status": "deleted"}
-
-
-# ── 端点：健康检查 ──────────────────────────────────────────────────────────
-@router.get("/health")
+@router.get('/health')
 def health():
-    """
-    服务健康检查。
+    return {'status': 'ok'}
 
-    返回：
-      {"status": "ok", "queue_size": <int>}
+@router.get('/voices')
+def voices(request: Request, provider: Literal['azure', 'minimax'] = 'azure',
+           q: str = '', client: str = Depends(authenticate)):
+    try:
+        catalog = voice_catalog(provider)
+    except RuntimeError as exc:
+        raise HTTPException(502, str(exc)) from None
+    facets = {}
+    for voice in catalog:
+        for key, tags in voice['facets'].items():
+            facets.setdefault(key, set()).update(tags)
+    # AND across dimensions; OR across repeated values of the same dimension.
+    filters = {k: request.query_params.getlist(k) for k in request.query_params if k not in ('provider', 'q')}
+    unknown = set(filters) - set(facets)
+    if unknown:
+        raise HTTPException(422, 'Unknown filter dimensions: ' + ', '.join(sorted(unknown)))
+    result = [v for v in catalog if (not q or q.casefold() in json.dumps(v, ensure_ascii=False).casefold())
+              and all(set(vals) & set(v['facets'].get(key, [])) for key, vals in filters.items())]
+    return {'voices': result, 'total': len(result), 'catalog_total': len(catalog),
+            'facets': {k: sorted(v) for k, v in facets.items()}}
 
-    queue_size 可用于监控积压情况：
-      - 0    = 空闲，队列无待处理任务
-      - >100 = 需要关注，处理速度跟不上提交速度
-    """
-    return {
-        "status": "ok",
-        "queue_size": _queue.qsize(),
-    }
+@router.post('/tts', status_code=202)
+def create_tts_task(body: SynthesisRequest, client: str = Depends(authenticate)):
+    if not (SPEECH_KEY if body.provider == 'azure' else MINIMAX_API_KEY):
+        raise HTTPException(503, body.provider + ' is not configured')
+    limit_submission(client)
+    task_id = 'tts_' + uuid.uuid4().hex
+    now = datetime.now(timezone.utc).isoformat()
+    with get_db() as conn:
+        conn.execute('BEGIN IMMEDIATE')
+        count = conn.execute("SELECT count(*) FROM tasks WHERE status IN ('pending','processing')").fetchone()[0]
+        if count >= MAX_PENDING:
+            raise HTTPException(429, 'Task queue is full', headers={'Retry-After': '30'})
+        conn.execute('INSERT INTO tasks (task_id,text,voice,rate,pitch,provider,owner,options,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)',
+                     (task_id, body.text, body.voice, body.rate, body.pitch, body.provider, client,
+                      body.model_dump_json(), now, now))
+        conn.commit()
+    _queue.put(task_id)
+    return {'task_id': task_id, 'status': 'pending', 'provider': body.provider,
+            'status_url': '/azure_api/tts/' + task_id}
+
+@router.get('/tts')
+def list_tasks(limit: int = Query(50, ge=1, le=200), client: str = Depends(authenticate)):
+    with get_db() as conn:
+        rows = conn.execute('SELECT * FROM tasks WHERE owner=? ORDER BY created_at DESC LIMIT ?', (client, limit)).fetchall()
+    return [present(dict(r)) for r in rows]
+
+@router.get('/tts/{task_id}')
+def get_task(task_id: str, client: str = Depends(authenticate)):
+    return present(owned(task_id, client))
+
+@router.get('/tts/audio/{task_id}')
+def download_audio(task_id: str, client: str = Depends(authenticate)):
+    task = owned(task_id, client)
+    if task['status'] != 'completed' or not task['audio_file']:
+        raise HTTPException(404, 'audio not ready')
+    path = AUDIO_DIR / task['audio_file']
+    if not path.is_file():
+        raise HTTPException(404, 'audio not found')
+    return FileResponse(path, media_type='audio/mpeg', filename=path.name, headers={'Cache-Control': 'private, no-store'})
+
+@router.get('/tts/{task_id}/timing')
+def download_timing(task_id: str, client: str = Depends(authenticate)):
+    task = owned(task_id, client)
+    if task['status'] != 'completed':
+        raise HTTPException(409, 'task not complete')
+    return {key: json.loads(task[key] or '[]') for key in ('sentence_timings', 'word_timings')}
+
+@router.get('/tts/{task_id}/subtitles.{fmt}')
+def download_subtitles(task_id: str, fmt: Literal['srt', 'vtt'], client: str = Depends(authenticate)):
+    task = owned(task_id, client)
+    if task['status'] != 'completed' or not task['sentence_timings']:
+        raise HTTPException(409, 'subtitles not ready')
+    return Response(subtitles(json.loads(task['sentence_timings']), fmt),
+        media_type='text/vtt' if fmt == 'vtt' else 'application/x-subrip',
+        headers={'Content-Disposition': f'attachment; filename="{task_id}.{fmt}"'})
+
+@router.delete('/tts/{task_id}')
+def delete_task(task_id: str, client: str = Depends(authenticate)):
+    task = owned(task_id, client)
+    if task['status'] in ('pending', 'processing'):
+        raise HTTPException(409, 'Cannot delete an active task')
+    if task['audio_file']:
+        (AUDIO_DIR / task['audio_file']).unlink(missing_ok=True)
+    with get_db() as conn:
+        conn.execute('DELETE FROM tasks WHERE task_id=? AND owner=?', (task_id, client))
+        conn.commit()
+    return {'status': 'deleted'}
