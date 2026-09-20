@@ -66,6 +66,7 @@ def normalize(provider, raw, source='system'):
         female = bool(re.search(r'女性|女声|女孩|御姐|大婶|少女|female|woman|girl', description, re.I))
         male = bool(re.search(r'男性|男声|男孩|少年|\bmale\b|\bman\b|\bboy\b', description, re.I))
         derived['gender'] = ['Female'] if female and not male else ['Male'] if male and not female else []
+    derived['style'] = [label for label in ['温柔', '温和', '沉稳', '活泼', '甜美', '清晰', '有力', '低沉', '沙哑', '磁性', '可爱', '专业', '欢快', '优雅'] if label in description]
     derived['age'] = [label for label in ['儿童', '青年', '中年', '老年'] if label in description]
     for key, value in derived.items():
         if value:

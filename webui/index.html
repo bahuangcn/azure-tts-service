@@ -97,12 +97,14 @@
         color: #b32c39;
         white-space: pre-wrap;
       }
-      #facets {
+      #facets,
+      #extraFacets {
         display: grid;
         grid-template-columns: 1fr 1fr;
         gap: 0 12px;
       }
-      #facets select {
+      #facets select,
+      #extraFacets select {
         font-size: 12px;
       }
       article {
@@ -142,6 +144,104 @@
         padding: 4px 8px;
         border-radius: 5px;
       }
+      .secondary {
+        background: #e7eff1;
+        color: #244b58;
+        font-size: 12px;
+      }
+      .filter-summary {
+        display: flex;
+        justify-content: space-between;
+        gap: 8px;
+        align-items: center;
+        margin-top: 18px;
+        font-size: 13px;
+      }
+      #moreFilters {
+        margin-top: 16px;
+      }
+      .voice-list {
+        max-height: 420px;
+        overflow-y: auto;
+        margin-top: 12px;
+        display: grid;
+        gap: 8px;
+      }
+      .voice-option {
+        text-align: left;
+        width: 100%;
+        background: #f8fafb;
+        color: #263544;
+        border: 1px solid #dce5e9;
+        padding: 12px;
+      }
+      .voice-option[aria-pressed="true"] {
+        border: 2px solid #146c74;
+        background: #eaf6f3;
+      }
+      .voice-option strong {
+        display: block;
+        font-size: 14px;
+      }
+      .voice-option small {
+        display: block;
+        font-size: 12px;
+        color: #637580;
+        margin-top: 6px;
+        line-height: 1.5;
+      }
+      .selected-voice {
+        color: #146c74;
+        font-size: 13px;
+        font-weight: 600;
+      }
+      .parameter {
+        margin: 22px 0;
+      }
+      .parameter label {
+        display: flex;
+        justify-content: space-between;
+        font-size: 14px;
+      }
+      output {
+        color: #146c74;
+        font-weight: 600;
+      }
+      input[type="range"] {
+        accent-color: #146c74;
+        cursor: pointer;
+        height: 32px;
+        padding: 0;
+        border: none;
+        background: transparent;
+      }
+      .range-labels {
+        display: flex;
+        justify-content: space-between;
+        font-size: 12px;
+        color: #637580;
+      }
+      .presets {
+        display: flex;
+        gap: 8px;
+        margin-top: 10px;
+      }
+      .presets button {
+        background: #e7eff1;
+        color: #244b58;
+        font-size: 12px;
+        padding: 7px 16px;
+      }
+      .presets button[aria-pressed="true"] {
+        background: #146c74;
+        color: white;
+      }
+      button:focus-visible,
+      input:focus-visible,
+      select:focus-visible {
+        outline: 3px solid #43a6b0;
+        outline-offset: 2px;
+      }
       @media (max-width: 850px) {
         main {
           grid-template-columns: 1fr;
@@ -157,32 +257,38 @@
     <main>
       <section>
         <div class="card">
-          <h2>连接服务</h2>
-          <label for="token">访问密钥</label
-          ><input
-            id="token"
-            type="password"
-            autocomplete="off"
-            placeholder="输入工作台访问密钥"
-          />
-          <p class="muted">
-            仅在当前页面内存中使用。Baby Story Creator 请在服务端保存独立密钥。
-          </p>
-          <button id="connect">连接并加载音色</button>
-          <p id="connection" class="muted">尚未连接</p>
-        </div>
-        <div class="card">
-          <h2>选择音色</h2>
+          <h2>音色分类</h2>
+          <p id="connection" class="muted" role="status">正在加载音色…</p>
           <label for="provider">语音引擎</label
           ><select id="provider">
             <option value="azure">Azure Speech</option>
-            <option value="minimax">MiniMax</option></select
-          ><label for="search">搜索音色或描述</label
-          ><input id="search" placeholder="名称、语言、描述…" />
+            <option value="minimax">MiniMax</option>
+          </select>
+          <p class="muted">
+            按语言、性别、来源和风格组合选择，筛选条件同时生效。
+          </p>
           <div id="facets"></div>
-          <p id="count" class="muted"></p>
-          <label for="voice">发音人</label
-          ><select id="voice"></select>
+          <details id="moreFilters">
+            <summary>更多分类标签</summary>
+            <div id="extraFacets"></div>
+          </details>
+          <div class="filter-summary">
+            <span id="count" role="status"></span
+            ><button id="clearFilters" class="secondary">重置筛选</button>
+          </div>
+          <label for="search">在筛选结果中查找名称（可选）</label>
+          <input id="search" placeholder="无需输入，直接从下方选择音色" />
+          <div
+            id="voiceList"
+            class="voice-list"
+            role="group"
+            aria-label="可选音色"
+          ></div>
+          <button id="showMore" class="secondary" hidden>显示更多音色</button>
+          <input id="voice" type="hidden" />
+          <p id="selectedVoice" class="selected-voice" role="status">
+            尚未选择音色
+          </p>
           <details>
             <summary>官方音色信息</summary>
             <pre id="voiceInfo"></pre>
@@ -197,21 +303,46 @@
             id="text"
             placeholder="小兔子打开窗户。月亮正对着它微笑。"
           ></textarea>
-          <div class="grid">
-            <div>
-              <label for="speed">语速倍率（0.5–2）</label
-              ><input
-                id="speed"
-                type="number"
-                min="0.5"
-                max="2"
-                step="0.1"
-                value="1"
-              />
+          <div class="parameter">
+            <label for="speed"
+              >语速
+              <output id="speedValue" for="speed">1.0× · 正常</output></label
+            >
+            <input
+              id="speed"
+              type="range"
+              min="0.5"
+              max="2"
+              step="0.1"
+              value="1"
+            />
+            <div class="range-labels">
+              <span>慢 0.5×</span><span>快 2.0×</span>
             </div>
-            <div>
-              <label for="pitch">音调（Azure: Hz / MiniMax: 半音）</label
-              ><input id="pitch" type="number" min="-12" max="12" value="0" />
+            <div class="presets" aria-label="语速预设">
+              <button data-speed="0.8">舒缓</button
+              ><button data-speed="1">正常</button
+              ><button data-speed="1.2">轻快</button>
+            </div>
+          </div>
+          <div class="parameter">
+            <label for="pitch"
+              >音调
+              <output id="pitchValue" for="pitch">0 Hz · 原声</output></label
+            >
+            <input
+              id="pitch"
+              type="range"
+              min="-50"
+              max="50"
+              step="1"
+              value="0"
+            />
+            <div class="range-labels"><span>低沉</span><span>明亮</span></div>
+            <div class="presets" aria-label="音调预设">
+              <button data-pitch="low">低一些</button
+              ><button data-pitch="normal">原声</button
+              ><button data-pitch="high">高一些</button>
             </div>
           </div>
           <p class="muted">
@@ -228,7 +359,7 @@
               刷新
             </button>
           </h2>
-          <div id="tasks" class="muted">连接后查看当前账号的合成记录。</div>
+          <div id="tasks" class="muted">正在加载合成记录…</div>
         </div>
       </section>
     </main>
@@ -240,6 +371,14 @@
         loading = 0;
       const labels = {
         language: "语言",
+        age: "年龄",
+        ModelSeries: "模型系列",
+        TailoredScenarios: "适用场景",
+        Capabilities: "能力",
+        Source: "官方来源",
+        FemaleSpeakers: "女性角色",
+        MaleSpeakers: "男性角色",
+        PersonaId: "角色标识",
         gender: "性别",
         style: "风格",
         role: "角色",
@@ -251,12 +390,10 @@
         ContentCategories: "内容类别",
       };
       async function api(path, options = {}) {
-        const r = await fetch("/azure_api" + path, {
+        const r = await fetch("/workbench_api" + path, {
           ...options,
-          headers: {
-            ...options.headers,
-            Authorization: "Bearer " + $("token").value,
-          },
+          credentials: "same-origin",
+          headers: { ...options.headers },
         });
         if (!r.ok) {
           const e = await r
@@ -271,66 +408,253 @@
       function error(e) {
         $("error").textContent = e.message;
       }
+      const coreDimensions = [
+        "language",
+        "gender",
+        "source",
+        "style",
+        "age",
+        "role",
+      ];
+      let filteredVoices = [],
+        visibleCount = 30,
+        facetValues = {};
+      const displayNames = new Intl.DisplayNames(["zh-CN"], {
+        type: "language",
+      });
+      const translated = {
+        Female: "女声",
+        Male: "男声",
+        Neutral: "中性",
+        system: "官方音色",
+        designed: "自设计音色",
+        cloned: "克隆音色",
+        __unknown__: "未标注",
+        GA: "正式版",
+        Preview: "预览版",
+        Neural: "神经网络",
+        chat: "聊天",
+        cheerful: "欢快",
+        friendly: "友好",
+        sad: "悲伤",
+        angry: "生气",
+        excited: "兴奋",
+        whispering: "轻声",
+        hopeful: "充满希望",
+        shouting: "高声",
+        terrified: "惊恐",
+        unfriendly: "冷淡",
+        newscast: "新闻播报",
+        customerservice: "客服",
+        assistant: "助手",
+        "narration-relaxed": "轻松旁白",
+        "narration-professional": "专业旁白",
+        Narrator: "旁白",
+        Boy: "男孩",
+        Girl: "女孩",
+        YoungAdultFemale: "青年女性",
+        YoungAdultMale: "青年男性",
+        OlderAdultFemale: "中年女性",
+        OlderAdultMale: "中年男性",
+        SeniorFemale: "老年女性",
+        SeniorMale: "老年男性",
+      };
+      function labelValue(key, value) {
+        if (translated[value]) return translated[value];
+        if (key === "language") {
+          try {
+            return displayNames.of(value) + " · " + value;
+          } catch {}
+        }
+        return value;
+      }
+      function allFilters() {
+        return [...document.querySelectorAll("select[data-key]")];
+      }
+      function matches(v, key, value) {
+        const tags = v.facets[key] || [];
+        return (
+          !value ||
+          (value === "__unknown__" ? !tags.length : tags.includes(value))
+        );
+      }
       async function loadVoices() {
         const generation = ++loading;
         $("submit").disabled = true;
-        $("count").textContent = "正在读取官方目录…";
+        catalog = [];
+        $("voice").value = "";
+        $("voiceList").replaceChildren();
+        $("facets").replaceChildren();
+        $("extraFacets").replaceChildren();
+        $("connection").textContent =
+          "正在加载" +
+          ($("provider").value === "azure" ? " Azure" : " MiniMax") +
+          "音色…";
+        $("count").textContent = "读取分类中…";
         try {
           const data = await (
             await api("/voices?provider=" + $("provider").value)
           ).json();
           if (generation !== loading) return;
           catalog = data.voices;
-          $("facets").replaceChildren();
-          for (const [key, vals] of Object.entries(data.facets)) {
-            if (!vals.length) continue;
+          facetValues = data.facets;
+          const keys = [
+            ...coreDimensions,
+            ...Object.keys(facetValues).filter(
+              (k) =>
+                !coreDimensions.includes(k) &&
+                !["tag", "classification"].includes(k),
+            ),
+          ];
+          for (const key of keys) {
+            const vals = facetValues[key] || [];
+            if (!coreDimensions.includes(key) && !vals.length) continue;
             const box = document.createElement("div"),
               label = document.createElement("label"),
               select = document.createElement("select");
             select.dataset.key = key;
+            select.id = "filter-" + key;
+            label.htmlFor = select.id;
             label.textContent = labels[key] || key;
             select.add(new Option("全部", ""));
-            vals.forEach((v) => select.add(new Option(v, v)));
-            select.onchange = filter;
+            vals.forEach((v) => select.add(new Option(labelValue(key, v), v)));
+            if (catalog.some((v) => !(v.facets[key] || []).length))
+              select.add(new Option("未标注", "__unknown__"));
+            select.onchange = () => {
+              visibleCount = 30;
+              filter();
+            };
             box.append(label, select);
-            $("facets").append(box);
+            (coreDimensions.includes(key)
+              ? $("facets")
+              : $("extraFacets")
+            ).append(box);
           }
+          $("moreFilters").hidden = !$("extraFacets").children.length;
+          connected = true;
+          $("connection").textContent =
+            "已自动连接 · " + catalog.length + " 个音色可用";
           filter();
-          $("submit").disabled = false;
         } catch (e) {
+          if (generation !== loading) return;
           catalog = [];
           filter();
+          $("connection").textContent = "音色加载失败，请刷新页面重试";
           error(e);
         }
       }
       function filter() {
-        const q = $("search").value.toLowerCase();
-        const filters = [...$("facets").querySelectorAll("select")].filter(
-          (s) => s.value,
-        );
-        const voices = catalog.filter(
+        const q = $("search").value.trim().toLowerCase(),
+          filters = allFilters();
+        const searchMatch = (v) =>
+          !q || JSON.stringify(v).toLowerCase().includes(q);
+        filteredVoices = catalog.filter(
           (v) =>
-            (!q || JSON.stringify(v).toLowerCase().includes(q)) &&
-            filters.every((s) =>
-              (v.facets[s.dataset.key] || []).includes(s.value),
-            ),
+            searchMatch(v) &&
+            filters.every((s) => matches(v, s.dataset.key, s.value)),
         );
-        $("voice").replaceChildren();
-        voices.forEach((v) =>
-          $("voice").add(new Option(v.name + " · " + v.id, v.id)),
-        );
+        for (const select of filters) {
+          const others = catalog.filter(
+            (v) =>
+              searchMatch(v) &&
+              filters.every(
+                (s) => s === select || matches(v, s.dataset.key, s.value),
+              ),
+          );
+          for (const option of select.options) {
+            const count = others.filter((v) =>
+              matches(v, select.dataset.key, option.value),
+            ).length;
+            option.textContent =
+              (option.value
+                ? labelValue(select.dataset.key, option.value)
+                : "全部") +
+              " (" +
+              count +
+              ")";
+            option.disabled =
+              !!option.value && !count && option.value !== select.value;
+          }
+        }
+        if (!filteredVoices.some((v) => v.id === $("voice").value)) {
+          const preferred =
+            filteredVoices.find((v) => v.id === "zh-CN-XiaochenNeural") ||
+            filteredVoices[0];
+          $("voice").value = preferred?.id || "";
+        }
         $("count").textContent =
-          voices.length +
-          " / " +
-          catalog.length +
-          " 个音色；多个筛选条件同时生效";
+          filteredVoices.length + " / " + catalog.length + " 个音色";
+        $("submit").disabled = !$("voice").value;
+        renderVoices();
         voiceInfo();
       }
+      function renderVoices() {
+        $("voiceList").replaceChildren();
+        if (!filteredVoices.length)
+          $("voiceList").textContent = "暂无匹配音色，请调整分类或重置筛选。";
+        for (const v of filteredVoices.slice(0, visibleCount)) {
+          const button = document.createElement("button"),
+            name = document.createElement("strong"),
+            badges = document.createElement("small");
+          button.className = "voice-option";
+          button.setAttribute(
+            "aria-pressed",
+            String(v.id === $("voice").value),
+          );
+          name.textContent = v.name;
+          badges.textContent = ["language", "gender", "source", "style"]
+            .flatMap((k) =>
+              (v.facets[k] || []).slice(0, 2).map((val) => labelValue(k, val)),
+            )
+            .join(" · ");
+          button.append(name, badges);
+          button.onclick = () => {
+            $("voice").value = v.id;
+            renderVoices();
+            voiceInfo();
+          };
+          $("voiceList").append(button);
+        }
+        $("showMore").hidden = visibleCount >= filteredVoices.length;
+      }
       function voiceInfo() {
-        $("voiceInfo").textContent = JSON.stringify(
-          catalog.find((v) => v.id === $("voice").value)?.official || {},
-          null,
-          2,
+        const v = catalog.find((v) => v.id === $("voice").value);
+        $("selectedVoice").textContent = v
+          ? "已选择：" + v.name
+          : "尚未选择音色";
+        $("voiceInfo").textContent = JSON.stringify(v?.official || {}, null, 2);
+      }
+      function updateParameters() {
+        const speed = Number($("speed").value),
+          pitch = Number($("pitch").value);
+        $("speedValue").textContent =
+          speed.toFixed(1) + "×" + (speed === 1 ? " · 正常" : "");
+        $("pitchValue").textContent =
+          (pitch > 0 ? "+" : "") +
+          pitch +
+          ($("provider").value === "azure" ? " Hz" : " 半音") +
+          (pitch === 0 ? " · 原声" : "");
+        document
+          .querySelectorAll("[data-speed]")
+          .forEach((b) =>
+            b.setAttribute(
+              "aria-pressed",
+              String(Number(b.dataset.speed) === speed),
+            ),
+          );
+        document
+          .querySelectorAll("[data-pitch]")
+          .forEach((b) =>
+            b.setAttribute(
+              "aria-pressed",
+              String(pitch === presetPitch(b.dataset.pitch)),
+            ),
+          );
+      }
+      function presetPitch(preset) {
+        return (
+          (preset === "low" ? -1 : preset === "high" ? 1 : 0) *
+          ($("provider").value === "azure" ? 20 : 3)
         );
       }
       async function download(path, name) {
@@ -453,18 +777,49 @@
           error(e);
         }
       }
-      $("connect").onclick = async () => {
+      $("provider").onchange = () => {
         $("error").textContent = "";
-        await loadVoices();
-        connected = catalog.length > 0;
-        $("connection").textContent = connected
-          ? "已连接"
-          : "连接失败，请检查密钥及服务状态";
-        await refresh();
+        const bound = $("provider").value === "azure" ? 50 : 12;
+        $("pitch").min = -bound;
+        $("pitch").max = bound;
+        $("pitch").value = 0;
+        $("search").value = "";
+        visibleCount = 30;
+        updateParameters();
+        loadVoices();
       };
-      $("provider").onchange = loadVoices;
-      $("search").oninput = filter;
-      $("voice").onchange = voiceInfo;
+      $("search").oninput = () => {
+        visibleCount = 30;
+        filter();
+      };
+      $("clearFilters").onclick = () => {
+        allFilters().forEach((s) => (s.value = ""));
+        $("search").value = "";
+        visibleCount = 30;
+        filter();
+      };
+      $("showMore").onclick = () => {
+        visibleCount += 30;
+        renderVoices();
+      };
+      $("speed").oninput = updateParameters;
+      $("pitch").oninput = updateParameters;
+      document.querySelectorAll("[data-speed]").forEach(
+        (b) =>
+          (b.onclick = () => {
+            $("speed").value = b.dataset.speed;
+            updateParameters();
+          }),
+      );
+      document.querySelectorAll("[data-pitch]").forEach(
+        (b) =>
+          (b.onclick = () => {
+            $("pitch").value = presetPitch(b.dataset.pitch);
+            updateParameters();
+          }),
+      );
+      updateParameters();
+      loadVoices().then(refresh);
       $("refresh").onclick = refresh;
       $("submit").onclick = async () => {
         try {
@@ -483,14 +838,14 @@
               speed,
               rate: Math.round((speed - 1) * 100) + "%",
               pitch: pitch + "Hz",
-              minimax_pitch: pitch,
+              minimax_pitch: $("provider").value === "minimax" ? pitch : 0,
             }),
           });
           await refresh();
         } catch (e) {
           error(e);
         } finally {
-          $("submit").disabled = false;
+          $("submit").disabled = !$("voice").value;
         }
       };
       // Explicit refresh preserves playback; poll only while the user is not playing audio.

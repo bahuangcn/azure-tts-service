@@ -26,6 +26,7 @@ venv/bin/python -m compileall -q . -x 'venv'
 install -m 644 webui/index.html /var/www/tools.exnihilo.site/tts/index.html
 # New API alias on the same two existing hosts, without modifying their TLS policy.
 python3 - <<'PY'
+import json
 from pathlib import Path
 for name in ('api.exnihilo.site.conf', 'tools.exnihilo.site.conf'):
     p=Path('/etc/nginx/conf.d')/name
@@ -33,6 +34,32 @@ for name in ('api.exnihilo.site.conf', 'tools.exnihilo.site.conf'):
     if 'location /api/v1/' not in s:
         s=s.replace('    location /azure_api/ {', '    location /api/v1/ {\n        proxy_pass http://127.0.0.1:12001;\n        proxy_set_header Host $host;\n        client_max_body_size 1m;\n    }\n\n    location /azure_api/ {')
         p.write_text(s)
+# Browser access relies on the existing mandatory client certificate. The webui
+# application credential stays in a root-only nginx include, never in HTML.
+settings = dict(line.split('=', 1) for line in Path('.env').read_text().splitlines()
+                if '=' in line and not line.lstrip().startswith('#'))
+key = json.loads(settings['TTS_API_KEYS'])['webui']
+if not key or any(c not in 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-' for c in key):
+    raise ValueError('webui proxy key must be URL-safe')
+snippet = Path('/etc/nginx/tts-workbench-auth.inc')
+snippet.write_text('proxy_set_header Authorization "Bearer ' + key + '";\n')
+snippet.chmod(0o600)
+p = Path('/etc/nginx/conf.d/tools.exnihilo.site.conf')
+s = p.read_text()
+if 'ssl_verify_client on;' not in s:
+    raise RuntimeError('Workbench requires mandatory nginx client certificate validation')
+if 'location /workbench_api/' not in s:
+    s = s.replace('    location /azure_api/ {', '''    location /workbench_api/ {
+        if ($http_origin !~ "^(https://tools[.]exnihilo[.]site)?$") { return 403; }
+        include /etc/nginx/tts-workbench-auth.inc;
+        proxy_pass http://127.0.0.1:12001/azure_api/;
+        proxy_set_header Host $host;
+        client_max_body_size 1m;
+        proxy_read_timeout 200s;
+    }
+
+    location /azure_api/ {''')
+    p.write_text(s)
 p=Path('/etc/systemd/system/azure-tts.service')
 s=p.read_text().replace('--host 0.0.0.0', '--host 127.0.0.1')
 # ffmpeg is installed in /usr/local/bin on 72.

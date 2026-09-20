@@ -112,7 +112,8 @@ TTS_MAX_PENDING=100
 
 部署：`bash deploy.sh`，会备份代码、SQLite、服务配置、网页及 nginx 配置，然后同步、验证、重启。
 密钥保存在 72 的 `/opt/azure-tts-service/.env`，Baby Story Creator 部署者通过 SSH 安全读取对应客户端密钥。
-工作台使用 webui 客户端密钥。更换 TTS_API_KEYS 对应值并重启即可轮换。
+工作台自动使用已配置的供应商密钥，无需填写任何 API Key。浏览器通过已有 mTLS 证书访问 `/workbench_api/`，nginx 在服务端注入 webui 凭证；该凭证保存在 root-only include 文件中，不发给浏览器。该代理只允许本站 Origin。
+Baby Story Creator 的 `/api/v1` 和 `/azure_api` 仍使用 mTLS + Bearer。更换客户端密钥后重启；若更换 webui 密钥，运行部署脚本以同步 nginx 内部凭证。
 
 旧版本文档中的 batch 参数不是本版支持的对外模式；接口统一走受保护的逐句工作流。
 
@@ -143,4 +144,17 @@ client.download(result["subtitles"]["srt"], "story.srt")
 python3 -m venv .venv
 .venv/bin/pip install -r requirements-dev.txt
 TTS_FFMPEG="$(.venv/bin/python -c 'import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_exe())')" .venv/bin/python -m pytest -q
+```
+
+
+工作台支持自动加载、多维分类及音色卡片；各分类按其他已选条件显示可选数量。
+语言、性别、来源、风格、年龄、角色显示在主筛选区，其他官方标签位于“更多分类标签”。
+缺少元信息的音色归入“未标注”，仍可选择；搜索仅用于进一步查找名称。
+语速滑块范围 0.5–2×；Azure 音调滑块为 -50–50 Hz，MiniMax 为 -12–12 半音，切换平台重置音调。
+
+工作台交互回归测试：
+
+```bash
+npm install --prefix /tmp/story-voice-ui-test --cache /tmp/story-voice-npm-cache jsdom
+NODE_PATH=/tmp/story-voice-ui-test/node_modules node tests/workbench.cjs
 ```
