@@ -1,24 +1,502 @@
 <!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Story Voice · 语音工作台</title>
-<style>
-:root{font-family:system-ui,sans-serif;color:#263544;background:#f4f6f8}*{box-sizing:border-box}body{margin:0}header{background:#163343;color:white;padding:28px max(24px,calc((100vw - 1200px)/2))}h1{margin:0;font-size:25px}header p{color:#b8cfd8;margin-bottom:0}main{max-width:1200px;margin:24px auto;padding:0 20px;display:grid;grid-template-columns:440px 1fr;gap:24px}.card{background:white;border:1px solid #dde4e9;border-radius:14px;padding:24px;margin-bottom:20px}h2{font-size:18px;margin:0 0 20px}label{display:block;font-size:13px;color:#536774;margin:14px 0 6px}input,select,textarea,button{font:inherit;border-radius:7px;border:1px solid #ccd7dd;padding:10px;max-width:100%}input,select,textarea{width:100%;background:white}textarea{height:210px;resize:vertical}button{cursor:pointer;background:#146c74;color:white;border:none}button:disabled{opacity:.5;cursor:wait}.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}.muted{font-size:13px;color:#637580}.error{color:#b32c39;white-space:pre-wrap}#facets{display:grid;grid-template-columns:1fr 1fr;gap:0 12px}#facets select{font-size:12px}article{border-top:1px solid #e3e9ed;padding:18px 0}article h3{font-size:15px;margin:0 0 8px}.actions{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}.actions button{font-size:12px;background:#e7eff1;color:#244b58}audio{width:100%}details{font-size:13px}pre{white-space:pre-wrap;max-height:260px;overflow:auto}.pill{display:inline-block;font-size:12px;background:#e8f2ee;padding:4px 8px;border-radius:5px}@media(max-width:850px){main{grid-template-columns:1fr}}
-</style></head><body>
-<header><h1>Story Voice <span style="font-weight:400">/ 语音工作台</span></h1><p>Azure & MiniMax · 音色探索 · 逐句时间轴与字幕</p></header>
-<main><section><div class="card"><h2>连接服务</h2><label for="token">访问密钥</label><input id="token" type="password" autocomplete="off" placeholder="输入工作台访问密钥"><p class="muted">仅在当前页面内存中使用。Baby Story Creator 请在服务端保存独立密钥。</p><button id="connect">连接并加载音色</button><p id="connection" class="muted">尚未连接</p></div>
-<div class="card"><h2>选择音色</h2><label for="provider">语音引擎</label><select id="provider"><option value="azure">Azure Speech</option><option value="minimax">MiniMax</option></select><label for="search">搜索音色或描述</label><input id="search" placeholder="名称、语言、描述…"><div id="facets"></div><p id="count" class="muted"></p><label for="voice">发音人</label><select id="voice"></select><details><summary>官方音色信息</summary><pre id="voiceInfo"></pre></details></div></section>
-<section><div class="card"><h2>合成故事</h2><label for="text">故事正文</label><textarea id="text" placeholder="小兔子打开窗户。月亮正对着它微笑。"></textarea><div class="grid"><div><label for="speed">语速倍率（0.5–2）</label><input id="speed" type="number" min="0.5" max="2" step="0.1" value="1"></div><div><label for="pitch">音调（Azure: Hz / MiniMax: 半音）</label><input id="pitch" type="number" min="-12" max="12" value="0"></div></div><p class="muted">每句单独合成、测量后拼接；句间会保留停顿。最多 20,000 字、200 句，每句最多 3,000 字。</p><button id="submit" disabled>生成音频与字幕</button><p id="error" class="error" role="alert"></p></div><div class="card"><h2>合成记录 <button id="refresh" style="float:right;font-size:12px">刷新</button></h2><div id="tasks" class="muted">连接后查看当前账号的合成记录。</div></div></section></main>
-<script>
-const $=id=>document.getElementById(id);let catalog=[],objectUrls=[],connected=false,loading=0;
-const labels={language:'语言',gender:'性别',style:'风格',role:'角色',source:'来源',type:'类型',status:'发布状态',tag:'官方描述标签',VoicePersonalities:'个性',ContentCategories:'内容类别'};
-async function api(path,options={}){const r=await fetch('/azure_api'+path,{...options,headers:{...options.headers,Authorization:'Bearer '+$('token').value}});if(!r.ok){const e=await r.json().catch(()=>({detail:'HTTP '+r.status}));throw Error(typeof e.detail==='string'?e.detail:JSON.stringify(e.detail))}return r}
-function error(e){$('error').textContent=e.message}
-async function loadVoices(){const generation=++loading;$('submit').disabled=true;$('count').textContent='正在读取官方目录…';try{const data=await(await api('/voices?provider='+$('provider').value)).json();if(generation!==loading)return;catalog=data.voices;$('facets').replaceChildren();for(const [key,vals] of Object.entries(data.facets)){if(!vals.length)continue;const box=document.createElement('div'),label=document.createElement('label'),select=document.createElement('select');select.dataset.key=key;label.textContent=labels[key]||key;select.add(new Option('全部',''));vals.forEach(v=>select.add(new Option(v,v)));select.onchange=filter;box.append(label,select);$('facets').append(box)}filter();$('submit').disabled=false}catch(e){catalog=[];filter();error(e)}}
-function filter(){const q=$('search').value.toLowerCase();const filters=[...$('facets').querySelectorAll('select')].filter(s=>s.value);const voices=catalog.filter(v=>(!q||JSON.stringify(v).toLowerCase().includes(q))&&filters.every(s=>(v.facets[s.dataset.key]||[]).includes(s.value)));$('voice').replaceChildren();voices.forEach(v=>$('voice').add(new Option(v.name+' · '+v.id,v.id)));$('count').textContent=voices.length+' / '+catalog.length+' 个音色；多个筛选条件同时生效';voiceInfo()}
-function voiceInfo(){$('voiceInfo').textContent=JSON.stringify(catalog.find(v=>v.id===$('voice').value)?.official||{},null,2)}
-async function download(path,name){try{const blob=await(await api(path.replace('/azure_api',''))).blob();const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}catch(e){error(e)}}
-async function refresh(){if(!connected)return;try{const tasks=await(await api('/tts?limit=30')).json();objectUrls.forEach(URL.revokeObjectURL);objectUrls=[];$('tasks').replaceChildren();if(!tasks.length)$('tasks').textContent='还没有合成记录。';for(const t of tasks){const article=document.createElement('article'),h=document.createElement('h3'),meta=document.createElement('div');h.textContent=t.text.slice(0,70);meta.textContent=t.provider+' · '+t.voice+' · '+t.status+(t.total_ms?' · '+(t.total_ms/1000).toFixed(2)+' 秒':'');article.append(h,meta);if(t.error){const p=document.createElement('p');p.className='error';p.textContent=t.error;article.append(p)}if(t.status==='completed'){const actions=document.createElement('div');actions.className='actions';for(const [name,path] of [['MP3',t.audio_url],['SRT',t.subtitles?.srt],['VTT',t.subtitles?.vtt],['时间轴 JSON',t.timing_url]]){if(!path)continue;const b=document.createElement('button');b.textContent='下载 '+name;b.onclick=()=>download(path,t.task_id+'.'+(name==='时间轴 JSON'?'json':name.toLowerCase()));actions.append(b)}const play=document.createElement('button');play.textContent='播放';play.onclick=async()=>{try{play.disabled=true;const url=URL.createObjectURL(await(await api(t.audio_url.replace('/azure_api',''))).blob());objectUrls.push(url);const audio=document.createElement('audio');audio.controls=true;audio.src=url;article.append(audio);await audio.play()}catch(e){error(e)}finally{play.disabled=false}};actions.append(play);article.append(actions);const detail=document.createElement('details'),summary=document.createElement('summary'),pre=document.createElement('pre');summary.textContent='逐句时间轴与元数据';pre.textContent=JSON.stringify({sentences:t.sentence_timings,metadata:t.metadata},null,2);detail.append(summary,pre);article.append(detail)}$('tasks').append(article)}}catch(e){error(e)}}
-$('connect').onclick=async()=>{$('error').textContent='';await loadVoices();connected=catalog.length>0;$('connection').textContent=connected?'已连接':'连接失败，请检查密钥及服务状态';await refresh()};$('provider').onchange=loadVoices;$('search').oninput=filter;$('voice').onchange=voiceInfo;$('refresh').onclick=refresh;
-$('submit').onclick=async()=>{try{$('error').textContent='';if(!$('voice').value)throw Error('请选择音色');$('submit').disabled=true;const speed=Number($('speed').value),pitch=Number($('pitch').value);await api('/tts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:$('text').value,provider:$('provider').value,voice:$('voice').value,speed,rate:Math.round((speed-1)*100)+'%',pitch:pitch+'Hz',minimax_pitch:pitch})});await refresh()}catch(e){error(e)}finally{$('submit').disabled=false}};
-// Explicit refresh preserves playback; poll only while the user is not playing audio.
-setInterval(()=>{if(connected&&!document.querySelector('audio'))refresh()},5000);
-</script></body></html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Story Voice · 语音工作台</title>
+    <style>
+      :root {
+        font-family: system-ui, sans-serif;
+        color: #263544;
+        background: #f4f6f8;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+      }
+      header {
+        background: #163343;
+        color: white;
+        padding: 28px max(24px, calc((100vw - 1200px) / 2));
+      }
+      h1 {
+        margin: 0;
+        font-size: 25px;
+      }
+      header p {
+        color: #b8cfd8;
+        margin-bottom: 0;
+      }
+      main {
+        max-width: 1200px;
+        margin: 24px auto;
+        padding: 0 20px;
+        display: grid;
+        grid-template-columns: 440px 1fr;
+        gap: 24px;
+      }
+      .card {
+        background: white;
+        border: 1px solid #dde4e9;
+        border-radius: 14px;
+        padding: 24px;
+        margin-bottom: 20px;
+      }
+      h2 {
+        font-size: 18px;
+        margin: 0 0 20px;
+      }
+      label {
+        display: block;
+        font-size: 13px;
+        color: #536774;
+        margin: 14px 0 6px;
+      }
+      input,
+      select,
+      textarea,
+      button {
+        font: inherit;
+        border-radius: 7px;
+        border: 1px solid #ccd7dd;
+        padding: 10px;
+        max-width: 100%;
+      }
+      input,
+      select,
+      textarea {
+        width: 100%;
+        background: white;
+      }
+      textarea {
+        height: 210px;
+        resize: vertical;
+      }
+      button {
+        cursor: pointer;
+        background: #146c74;
+        color: white;
+        border: none;
+      }
+      button:disabled {
+        opacity: 0.5;
+        cursor: wait;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+      }
+      .muted {
+        font-size: 13px;
+        color: #637580;
+      }
+      .error {
+        color: #b32c39;
+        white-space: pre-wrap;
+      }
+      #facets {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 0 12px;
+      }
+      #facets select {
+        font-size: 12px;
+      }
+      article {
+        border-top: 1px solid #e3e9ed;
+        padding: 18px 0;
+      }
+      article h3 {
+        font-size: 15px;
+        margin: 0 0 8px;
+      }
+      .actions {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin: 12px 0;
+      }
+      .actions button {
+        font-size: 12px;
+        background: #e7eff1;
+        color: #244b58;
+      }
+      audio {
+        width: 100%;
+      }
+      details {
+        font-size: 13px;
+      }
+      pre {
+        white-space: pre-wrap;
+        max-height: 260px;
+        overflow: auto;
+      }
+      .pill {
+        display: inline-block;
+        font-size: 12px;
+        background: #e8f2ee;
+        padding: 4px 8px;
+        border-radius: 5px;
+      }
+      @media (max-width: 850px) {
+        main {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Story Voice <span style="font-weight: 400">/ 语音工作台</span></h1>
+      <p>Azure & MiniMax · 音色探索 · 逐句时间轴与字幕</p>
+    </header>
+    <main>
+      <section>
+        <div class="card">
+          <h2>连接服务</h2>
+          <label for="token">访问密钥</label
+          ><input
+            id="token"
+            type="password"
+            autocomplete="off"
+            placeholder="输入工作台访问密钥"
+          />
+          <p class="muted">
+            仅在当前页面内存中使用。Baby Story Creator 请在服务端保存独立密钥。
+          </p>
+          <button id="connect">连接并加载音色</button>
+          <p id="connection" class="muted">尚未连接</p>
+        </div>
+        <div class="card">
+          <h2>选择音色</h2>
+          <label for="provider">语音引擎</label
+          ><select id="provider">
+            <option value="azure">Azure Speech</option>
+            <option value="minimax">MiniMax</option></select
+          ><label for="search">搜索音色或描述</label
+          ><input id="search" placeholder="名称、语言、描述…" />
+          <div id="facets"></div>
+          <p id="count" class="muted"></p>
+          <label for="voice">发音人</label
+          ><select id="voice"></select>
+          <details>
+            <summary>官方音色信息</summary>
+            <pre id="voiceInfo"></pre>
+          </details>
+        </div>
+      </section>
+      <section>
+        <div class="card">
+          <h2>合成故事</h2>
+          <label for="text">故事正文</label
+          ><textarea
+            id="text"
+            placeholder="小兔子打开窗户。月亮正对着它微笑。"
+          ></textarea>
+          <div class="grid">
+            <div>
+              <label for="speed">语速倍率（0.5–2）</label
+              ><input
+                id="speed"
+                type="number"
+                min="0.5"
+                max="2"
+                step="0.1"
+                value="1"
+              />
+            </div>
+            <div>
+              <label for="pitch">音调（Azure: Hz / MiniMax: 半音）</label
+              ><input id="pitch" type="number" min="-12" max="12" value="0" />
+            </div>
+          </div>
+          <p class="muted">
+            每句单独合成、测量后拼接；句间会保留停顿。最多 20,000 字、200
+            句，每句最多 3,000 字。
+          </p>
+          <button id="submit" disabled>生成音频与字幕</button>
+          <p id="error" class="error" role="alert"></p>
+        </div>
+        <div class="card">
+          <h2>
+            合成记录
+            <button id="refresh" style="float: right; font-size: 12px">
+              刷新
+            </button>
+          </h2>
+          <div id="tasks" class="muted">连接后查看当前账号的合成记录。</div>
+        </div>
+      </section>
+    </main>
+    <script>
+      const $ = (id) => document.getElementById(id);
+      let catalog = [],
+        objectUrls = [],
+        connected = false,
+        loading = 0;
+      const labels = {
+        language: "语言",
+        gender: "性别",
+        style: "风格",
+        role: "角色",
+        source: "来源",
+        type: "类型",
+        status: "发布状态",
+        tag: "官方描述标签",
+        VoicePersonalities: "个性",
+        ContentCategories: "内容类别",
+      };
+      async function api(path, options = {}) {
+        const r = await fetch("/azure_api" + path, {
+          ...options,
+          headers: {
+            ...options.headers,
+            Authorization: "Bearer " + $("token").value,
+          },
+        });
+        if (!r.ok) {
+          const e = await r
+            .json()
+            .catch(() => ({ detail: "HTTP " + r.status }));
+          throw Error(
+            typeof e.detail === "string" ? e.detail : JSON.stringify(e.detail),
+          );
+        }
+        return r;
+      }
+      function error(e) {
+        $("error").textContent = e.message;
+      }
+      async function loadVoices() {
+        const generation = ++loading;
+        $("submit").disabled = true;
+        $("count").textContent = "正在读取官方目录…";
+        try {
+          const data = await (
+            await api("/voices?provider=" + $("provider").value)
+          ).json();
+          if (generation !== loading) return;
+          catalog = data.voices;
+          $("facets").replaceChildren();
+          for (const [key, vals] of Object.entries(data.facets)) {
+            if (!vals.length) continue;
+            const box = document.createElement("div"),
+              label = document.createElement("label"),
+              select = document.createElement("select");
+            select.dataset.key = key;
+            label.textContent = labels[key] || key;
+            select.add(new Option("全部", ""));
+            vals.forEach((v) => select.add(new Option(v, v)));
+            select.onchange = filter;
+            box.append(label, select);
+            $("facets").append(box);
+          }
+          filter();
+          $("submit").disabled = false;
+        } catch (e) {
+          catalog = [];
+          filter();
+          error(e);
+        }
+      }
+      function filter() {
+        const q = $("search").value.toLowerCase();
+        const filters = [...$("facets").querySelectorAll("select")].filter(
+          (s) => s.value,
+        );
+        const voices = catalog.filter(
+          (v) =>
+            (!q || JSON.stringify(v).toLowerCase().includes(q)) &&
+            filters.every((s) =>
+              (v.facets[s.dataset.key] || []).includes(s.value),
+            ),
+        );
+        $("voice").replaceChildren();
+        voices.forEach((v) =>
+          $("voice").add(new Option(v.name + " · " + v.id, v.id)),
+        );
+        $("count").textContent =
+          voices.length +
+          " / " +
+          catalog.length +
+          " 个音色；多个筛选条件同时生效";
+        voiceInfo();
+      }
+      function voiceInfo() {
+        $("voiceInfo").textContent = JSON.stringify(
+          catalog.find((v) => v.id === $("voice").value)?.official || {},
+          null,
+          2,
+        );
+      }
+      async function download(path, name) {
+        try {
+          const blob = await (await api(path.replace("/azure_api", ""))).blob();
+          const url = URL.createObjectURL(blob),
+            a = document.createElement("a");
+          a.href = url;
+          a.download = name;
+          a.click();
+          setTimeout(() => URL.revokeObjectURL(url), 1000);
+        } catch (e) {
+          error(e);
+        }
+      }
+      async function refresh() {
+        if (!connected) return;
+        try {
+          const tasks = await (await api("/tts?limit=30")).json();
+          objectUrls.forEach(URL.revokeObjectURL);
+          objectUrls = [];
+          $("tasks").replaceChildren();
+          if (!tasks.length) $("tasks").textContent = "还没有合成记录。";
+          for (const t of tasks) {
+            const article = document.createElement("article"),
+              h = document.createElement("h3"),
+              meta = document.createElement("div");
+            h.textContent = t.text.slice(0, 70);
+            meta.textContent =
+              t.provider +
+              " · " +
+              t.voice +
+              " · " +
+              t.status +
+              (t.total_ms
+                ? " · " + (t.total_ms / 1000).toFixed(2) + " 秒"
+                : "");
+            article.append(h, meta);
+            if (t.error) {
+              const p = document.createElement("p");
+              p.className = "error";
+              p.textContent = t.error;
+              article.append(p);
+            }
+            if (t.status === "completed") {
+              const actions = document.createElement("div");
+              actions.className = "actions";
+              for (const [name, path] of [
+                ["MP3", t.audio_url],
+                ["SRT", t.subtitles?.srt],
+                ["VTT", t.subtitles?.vtt],
+                ["时间轴 JSON", t.timing_url],
+              ]) {
+                if (!path) continue;
+                const b = document.createElement("button");
+                b.textContent = "下载 " + name;
+                b.onclick = () =>
+                  download(
+                    path,
+                    t.task_id +
+                      "." +
+                      (name === "时间轴 JSON" ? "json" : name.toLowerCase()),
+                  );
+                actions.append(b);
+              }
+              const play = document.createElement("button");
+              play.textContent = "播放";
+              play.onclick = async () => {
+                try {
+                  play.disabled = true;
+                  const url = URL.createObjectURL(
+                    await (
+                      await api(t.audio_url.replace("/azure_api", ""))
+                    ).blob(),
+                  );
+                  objectUrls.push(url);
+                  const audio = document.createElement("audio");
+                  audio.controls = true;
+                  audio.src = url;
+                  article.append(audio);
+                  await audio.play();
+                } catch (e) {
+                  error(e);
+                } finally {
+                  play.disabled = false;
+                }
+              };
+              actions.append(play);
+              article.append(actions);
+              const detail = document.createElement("details"),
+                summary = document.createElement("summary"),
+                pre = document.createElement("pre");
+              summary.textContent = "逐句时间轴与元数据";
+              pre.textContent = JSON.stringify(
+                { sentences: t.sentence_timings, metadata: t.metadata },
+                null,
+                2,
+              );
+              detail.append(summary, pre);
+              article.append(detail);
+            }
+            if (["completed", "failed"].includes(t.status)) {
+              const del = document.createElement("button");
+              del.textContent = "删除记录";
+              del.className = "muted";
+              del.onclick = async () => {
+                if (!confirm("删除这条记录及音频？")) return;
+                try {
+                  await api("/tts/" + t.task_id, { method: "DELETE" });
+                  await refresh();
+                } catch (e) {
+                  error(e);
+                }
+              };
+              article.append(del);
+            }
+            $("tasks").append(article);
+          }
+        } catch (e) {
+          error(e);
+        }
+      }
+      $("connect").onclick = async () => {
+        $("error").textContent = "";
+        await loadVoices();
+        connected = catalog.length > 0;
+        $("connection").textContent = connected
+          ? "已连接"
+          : "连接失败，请检查密钥及服务状态";
+        await refresh();
+      };
+      $("provider").onchange = loadVoices;
+      $("search").oninput = filter;
+      $("voice").onchange = voiceInfo;
+      $("refresh").onclick = refresh;
+      $("submit").onclick = async () => {
+        try {
+          $("error").textContent = "";
+          if (!$("voice").value) throw Error("请选择音色");
+          $("submit").disabled = true;
+          const speed = Number($("speed").value),
+            pitch = Number($("pitch").value);
+          await api("/tts", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              text: $("text").value,
+              provider: $("provider").value,
+              voice: $("voice").value,
+              speed,
+              rate: Math.round((speed - 1) * 100) + "%",
+              pitch: pitch + "Hz",
+              minimax_pitch: pitch,
+            }),
+          });
+          await refresh();
+        } catch (e) {
+          error(e);
+        } finally {
+          $("submit").disabled = false;
+        }
+      };
+      // Explicit refresh preserves playback; poll only while the user is not playing audio.
+      setInterval(() => {
+        if (connected && !document.querySelector("audio")) refresh();
+      }, 5000);
+    </script>
+  </body>
+</html>

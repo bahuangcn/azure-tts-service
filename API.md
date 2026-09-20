@@ -1,7 +1,8 @@
 # Story Voice API
 
 生产地址：`https://tools.exnihilo.site/azure_api`。相同接口也挂载在 `/api/v1`。
-`https://api.exnihilo.site` 额外要求已有的客户端 mTLS 证书。
+两个域名 `tools.exnihilo.site` 和 `api.exnihilo.site` 均要求已有的客户端 mTLS 证书（例如 ba-user），并叠加 Bearer 鉴权。
+浏览器使用已安装的证书；Baby Story Creator 服务端需配置客户端证书和私钥。
 
 所有业务接口必须发送 `Authorization: Bearer <client-secret>`，包括音频、字幕下载。
 只有 `/health` 无需鉴权。密钥只能放 Baby Story Creator **服务端环境变量**，不能打包进客户端。
@@ -118,3 +119,28 @@ TTS_MAX_PENDING=100
 实现依据：[MiniMax TTS](https://platform.minimax.io/docs/api-reference/speech-t2a-http)、
 [MiniMax 音色目录](https://platform.minimax.io/docs/api-reference/voice-management-get)、
 [Azure 音色目录](https://learn.microsoft.com/en-us/azure/ai-services/speech-service/rest-text-to-speech)。
+
+## Python 客户端
+
+仓库 `story_client.py` 提供带 mTLS、鉴权、轮询、下载的客户端：
+
+```python
+from story_client import StoryVoiceClient
+client = StoryVoiceClient()  # 从 STORY_TTS_TOKEN / STORY_TTS_CERT / STORY_TTS_CERT_KEY 读取
+result = client.synthesize("你好。晚安。", "babystory-moon-postman-narrator", provider="minimax")
+client.download(result["audio_url"], "story.mp3")
+client.download(result["subtitles"]["srt"], "story.srt")
+```
+
+2026-09-20 验收：Azure 779 个音色；MiniMax 303 个官方音色、2 个设计音色。
+两家引擎均通过两句真实合成及 MP3 / JSON / SRT / VTT 下载。
+已补齐 tools 域名缺少的 Let’s Encrypt Root YE / X2 交叉签名链，修复 TLS 验证。
+证书续期时需保持完整链，参考 [官方证书链](https://letsencrypt.org/certificates/)。
+
+本地测试（独立 ffmpeg 避免依赖系统编解码库）：
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -r requirements-dev.txt
+TTS_FFMPEG="$(.venv/bin/python -c 'import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_exe())')" .venv/bin/python -m pytest -q
+```
