@@ -21,9 +21,72 @@
         background: white;
         border-radius: 16px;
       }
-      a {
-        color: #146c74;
+
+      .page-header {
+        background: #163343;
+        color: white;
+        padding: 24px max(24px, calc((100vw - 1160px) / 2));
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 24px;
+        flex-wrap: wrap;
       }
+      .page-header h1 {
+        margin: 0;
+        font-size: 25px;
+      }
+      .page-header p {
+        color: #b8cfd8;
+        margin: 8px 0 0;
+        font-size: 14px;
+      }
+      .page-nav {
+        display: flex;
+        gap: 6px;
+        padding: 5px;
+        border: 1px solid #45606e;
+        border-radius: 12px;
+        background: #203f4f;
+      }
+      .page-nav a {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 42px;
+        padding: 10px 16px;
+        color: #d8e6eb;
+        text-decoration: none;
+        border-radius: 8px;
+        font-size: 14px;
+        font-weight: 600;
+        white-space: nowrap;
+      }
+      .page-nav a:hover {
+        background: #315463;
+        color: white;
+      }
+      .page-nav a[aria-current="page"] {
+        background: #fff;
+        color: #163343;
+      }
+      .page-nav a:focus-visible {
+        outline: 3px solid #69c8ce;
+        outline-offset: 3px;
+      }
+      @media (max-width: 600px) {
+        .page-header {
+          padding: 22px 20px;
+          gap: 18px;
+        }
+        .page-nav {
+          width: 100%;
+        }
+        .page-nav a {
+          flex: 1;
+        }
+      }
+
       h1 {
         font-size: 24px;
       }
@@ -90,8 +153,17 @@
     </style>
   </head>
   <body>
+    <header class="page-header">
+      <div>
+        <h1>Story Voice</h1>
+        <p>Azure & MiniMax · 语音工作台</p>
+      </div>
+      <nav class="page-nav" aria-label="页面导航">
+        <a href="./">语音工作台</a>
+        <a href="languages.html" aria-current="page">语言显示配置</a>
+      </nav>
+    </header>
     <main>
-      <a href="./">← 返回语音工作台</a>
       <h1>语言显示配置</h1>
       <p>
         勾选工作台需要显示的语言。默认仅中文、英文；同一语言下的地区、方言会一起启用。保存后返回工作台生效，配置保存在服务端。
@@ -113,8 +185,7 @@
       <p id="count" role="status">加载中…</p>
       <div id="languages"></div>
       <div class="actions">
-        <button id="save" disabled>保存语言配置</button
-        ><a href="./">返回工作台</a>
+        <button id="save" disabled>保存语言配置</button>
       </div>
       <p id="status" role="status"></p>
       <p id="error" role="alert"></p>
