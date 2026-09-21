@@ -5,7 +5,7 @@ import re
 import threading
 from xml.sax.saxutils import escape, quoteattr
 import requests
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from chunker import split_text
 from config import MINIMAX_API_KEY, MINIMAX_BASE_URL
 
@@ -15,6 +15,14 @@ SCENES = {'mother': '妈妈讲故事：温暖亲近、舒缓克制，适合孩�
           'bedtime': '睡前安抚：轻柔、留白、缓慢但自然，不拖长每个字',
           'natural': '自然讲述：流畅亲切，按情节轻微起伏', 'custom': '遵循用户的朗读要求'}
 EMOTIONS = ['neutral', 'calm', 'happy', 'sad', 'surprised', 'fluent', 'whisper']
+
+def normalize_tool_list(value):
+    # M3 occasionally serializes tool arrays as {"item": ...}. Unwrap only
+    # that exact envelope; normal schema validation still checks every cue.
+    if isinstance(value, dict) and set(value) == {'item'}:
+        value = value['item']
+        return value if isinstance(value, list) else [value]
+    return value
 
 class PauseCue(BaseModel):
     after: str = Field(min_length=1, max_length=160)
@@ -34,9 +42,19 @@ class BlockControl(BaseModel):
     pauses: list[PauseCue] = Field(default_factory=list, max_length=16)
     emphasis: list[EmphasisCue] = Field(default_factory=list, max_length=8)
 
+    @field_validator('pauses', 'emphasis', mode='before')
+    @classmethod
+    def normalize_lists(cls, value):
+        return normalize_tool_list(value)
+
 class ModelPlan(BaseModel):
     summary: str = Field(max_length=500)
     blocks: list[BlockControl] = Field(min_length=1, max_length=200)
+
+    @field_validator('blocks', mode='before')
+    @classmethod
+    def normalize_blocks(cls, value):
+        return normalize_tool_list(value)
 
 
 def plan_blocks(text):

@@ -104,3 +104,13 @@ def test_arrangement_reaches_synthesis(monkeypatch):
         metadata=json.loads(captured['metadata'])
         assert metadata['synthesis_mode']=='ai_arranged_blocks' and metadata['block_count']==1
         assert metadata['reading_plan']['source_text']==TEXT
+
+
+def test_model_tool_array_envelopes():
+    from reading_plan import ModelPlan
+    result = ModelPlan.model_validate({'summary': '舒缓', 'blocks': {'item': {
+        'index': 0, 'speed': .85, 'pitch': 0, 'emotion': 'calm', 'explanation': '',
+        'pauses': {'item': [{'after': '很久以前，', 'duration_ms': 400}]},
+        'emphasis': {'item': {'text': '温暖'}}}}})
+    assert result.blocks[0].pauses[0].duration_ms == 400
+    assert result.blocks[0].emphasis[0].text == '温暖'
