@@ -221,36 +221,66 @@
       }
       .voice-row {
         display: grid;
-        grid-template-columns: minmax(0, 1fr) auto;
+        grid-template-columns: minmax(0, 1fr) 44px;
         gap: 8px;
         align-items: start;
-      }
-      .preview-button {
-        margin-top: 8px;
-        background: #e7eff1;
-        color: #244b58;
-      }
-      .preview-panel {
         padding: 12px;
         border: 1px solid #dce5e9;
-        border-radius: 8px;
-        background: #f7fafb;
-        margin-top: 12px;
+        border-radius: 10px;
+        background: #f8fafb;
       }
-      .preview-panel[hidden] {
+      .voice-row[data-selected="true"] {
+        border-color: #146c74;
+        box-shadow: inset 0 0 0 1px #146c74;
+        background: #eaf6f3;
+      }
+      .preview-button {
+        width: 40px;
+        height: 40px;
+        padding: 0;
+        border-radius: 50%;
+        background: #e0edef;
+        color: #146c74;
+        font-size: 16px;
+      }
+      .preview-button[aria-expanded="true"] {
+        background: #146c74;
+        color: white;
+      }
+      .preview-panel {
+        grid-column: 1 / -1;
+        border-top: 1px solid #d0dfe2;
+        padding-top: 10px;
+      }
+      .preview-toolbar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 8px;
+      }
+      .preview-toolbar p {
+        margin: 0;
+      }
+      .preview-close {
+        background: transparent;
+        color: #536774;
+        padding: 6px 10px;
+      }
+      .preview-panel audio {
+        width: 100%;
+        display: block;
+        margin-top: 8px;
+      }
+      .preview-panel audio[hidden] {
         display: none;
       }
       .voice-option {
         text-align: left;
         width: 100%;
-        background: #f8fafb;
+        padding: 0;
+        border: 0;
+        background: transparent;
         color: #263544;
-        border: 1px solid #dce5e9;
-        padding: 12px;
-      }
-      .voice-option[aria-pressed="true"] {
-        border: 2px solid #146c74;
-        background: #eaf6f3;
       }
       .voice-option strong {
         display: block;
@@ -378,11 +408,6 @@
           <div class="filter-summary">
             <span id="count" role="status"></span
             ><button id="clearFilters" class="secondary">重置筛选</button>
-          </div>
-          <div id="previewPanel" class="preview-panel" hidden>
-            <p id="previewStatus" class="muted" role="status"></p>
-            <audio id="previewAudio" controls hidden></audio>
-            <button id="stopPreview" class="secondary">停止试听</button>
           </div>
           <p class="muted">
             试听按当前语速、音调生成短句原声，不应用风格筛选。首次生成需稍候，相同参数再次试听直接复用。
@@ -793,10 +818,21 @@
         voiceInfo();
       }
       function renderVoices() {
-        $("voiceList").replaceChildren();
+        const list = $("voiceList");
+        const visible = filteredVoices.slice(0, visibleCount);
+        if (
+          activePreview &&
+          !visible.some((v) => v.id === activePreview.voice.id)
+        )
+          stopPreview();
+        for (const child of [...list.children]) {
+          if (!visible.some((v) => v.id === child.dataset.voiceId))
+            child.remove();
+        }
+        if (!list.children.length) list.textContent = "";
         if (!filteredVoices.length)
           $("voiceList").textContent = "暂无匹配音色，请调整分类或重置筛选。";
-        for (const v of filteredVoices.slice(0, visibleCount)) {
+        for (const [index, v] of visible.entries()) {
           const button = document.createElement("button"),
             name = document.createElement("strong"),
             badges = document.createElement("small");
@@ -839,15 +875,25 @@
             renderVoices();
             voiceInfo();
           };
-          const row = document.createElement("div"),
-            previewButton = document.createElement("button");
-          row.className = "voice-row";
-          previewButton.className = "preview-button";
-          previewButton.textContent = "试听";
-          previewButton.setAttribute("aria-label", "试听 " + v.name);
-          previewButton.onclick = () => previewVoice(v);
-          row.append(button, previewButton);
-          $("voiceList").append(row);
+          let row = [...list.children].find(
+            (row) => row.dataset.voiceId === v.id,
+          );
+          if (!row) {
+            row = document.createElement("div");
+            row.className = "voice-row";
+            row.dataset.voiceId = v.id;
+            const previewButton = document.createElement("button");
+            previewButton.className = "preview-button";
+            previewButton.textContent = "▶";
+            previewButton.setAttribute("aria-label", "试听 " + v.name);
+            previewButton.title = "试听";
+            previewButton.setAttribute("aria-expanded", "false");
+            previewButton.onclick = () => previewVoice(v, row);
+            row.append(button, previewButton);
+          } else row.querySelector(".voice-option").replaceWith(button);
+          row.dataset.selected = String(v.id === $("voice").value);
+          if (list.children[index] !== row)
+            list.insertBefore(row, list.children[index] || null);
         }
         $("showMore").hidden = visibleCount >= filteredVoices.length;
       }
@@ -1081,41 +1127,117 @@
       );
       updateParameters();
       let previewGeneration = 0,
-        previewUrl = null;
+        activePreview = null;
       function stopPreview() {
         previewGeneration++;
-        const audio = $("previewAudio");
-        if (audio.hasAttribute("src")) audio.pause();
-        audio.removeAttribute("src");
-        audio.hidden = true;
-        if (previewUrl) URL.revokeObjectURL(previewUrl);
-        previewUrl = null;
-        $("previewPanel").hidden = true;
+        const active = activePreview;
+        activePreview = null;
+        if (!active) return;
+        if (active.audio.hasAttribute("src")) active.audio.pause();
+        active.audio.removeAttribute("src");
+        if (active.url) URL.revokeObjectURL(active.url);
+        active.panel.remove();
+        active.button.disabled = false;
+        active.button.textContent = "▶";
+        active.button.title = "试听";
+        active.button.setAttribute("aria-label", "试听 " + active.voice.name);
+        active.button.setAttribute("aria-expanded", "false");
+        active.button.removeAttribute("aria-controls");
       }
-      $("stopPreview").onclick = stopPreview;
-      async function previewVoice(voice) {
+      async function previewVoice(voice, row) {
+        const payload = {
+          provider: voice.provider || $("provider").value,
+          voice: voice.id,
+          speed: Number($("speed").value),
+          pitch: Number($("pitch").value),
+        };
+        const key = JSON.stringify(payload);
+        if (
+          activePreview?.key === key &&
+          activePreview.audio.hasAttribute("src")
+        ) {
+          const { audio, status } = activePreview;
+          if (!audio.paused) audio.pause();
+          else {
+            try {
+              await audio.play();
+            } catch {
+              status.textContent = "请使用下方播放器继续播放";
+            }
+          }
+          return;
+        }
         stopPreview();
         const run = previewGeneration;
-        $("previewPanel").hidden = false;
-        $("previewPanel").scrollIntoView({
-          block: "nearest",
-          behavior: "smooth",
-        });
-        document.querySelectorAll("audio").forEach((audio) => {
-          if (!audio.paused) audio.pause();
-        });
-        $("previewStatus").textContent = "正在生成试听：" + voice.name + "…";
+        const panel = document.createElement("div"),
+          toolbar = document.createElement("div"),
+          status = document.createElement("p"),
+          audio = document.createElement("audio"),
+          close = document.createElement("button"),
+          button = row.querySelector(".preview-button");
+        panel.id = "previewPanel";
+        panel.className = "preview-panel";
+        toolbar.className = "preview-toolbar";
+        status.id = "previewStatus";
+        status.className = "muted";
+        status.setAttribute("role", "status");
+        status.textContent = "正在生成试听…";
+        audio.id = "previewAudio";
+        audio.controls = true;
+        audio.hidden = true;
+        audio.setAttribute("aria-label", voice.name + "试听播放器");
+        close.id = "stopPreview";
+        close.className = "preview-close";
+        close.textContent = "关闭 ×";
+        close.setAttribute("aria-label", "关闭 " + voice.name + " 的试听");
+        close.onclick = () => {
+          stopPreview();
+          button.focus();
+        };
+        toolbar.append(status, close);
+        panel.append(toolbar, audio);
+        row.append(panel);
+        const active = { key, voice, panel, status, audio, button, url: null };
+        activePreview = active;
+        button.disabled = true;
+        button.textContent = "…";
+        button.setAttribute("aria-expanded", "true");
+        button.setAttribute("aria-controls", panel.id);
+        function playbackState() {
+          if (activePreview !== active) return;
+          const playing = !audio.paused && !audio.ended;
+          button.textContent = playing ? "Ⅱ" : "▶";
+          button.title = playing ? "暂停试听" : "继续试听";
+          button.setAttribute("aria-label", button.title + " " + voice.name);
+          status.textContent = playing
+            ? "正在试听"
+            : audio.ended
+              ? "试听结束，可重新播放"
+              : "已暂停";
+        }
+        audio.onplay = () => {
+          document.querySelectorAll("audio").forEach((other) => {
+            if (other !== audio && !other.paused) other.pause();
+          });
+          playbackState();
+        };
+        audio.onpause = playbackState;
+        audio.onended = playbackState;
+        audio.onerror = () => {
+          if (activePreview !== active) return;
+          audio.removeAttribute("src");
+          audio.hidden = true;
+          status.textContent = "音频播放失败，请点击重试";
+          button.textContent = "▶";
+          button.disabled = false;
+        };
+        panel.scrollIntoView({ block: "nearest", behavior: "smooth" });
         try {
           let task = await (
             await api("/voices/preview", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                provider: voice.provider || $("provider").value,
-                voice: voice.id,
-                speed: Number($("speed").value),
-                pitch: Number($("pitch").value),
-              }),
+              body: JSON.stringify(payload),
             })
           ).json();
           const deadline = Date.now() + 240000;
@@ -1127,29 +1249,33 @@
                 await api(task.audio_url.replace("/azure_api", ""))
               ).blob();
               if (run !== previewGeneration) return;
-              previewUrl = URL.createObjectURL(blob);
-              const audio = $("previewAudio");
-              audio.src = previewUrl;
+              active.url = URL.createObjectURL(blob);
+              audio.src = active.url;
               audio.hidden = false;
-              $("previewStatus").textContent = "正在试听：" + voice.name;
+              button.disabled = false;
               try {
                 await audio.play();
               } catch {
-                if (run === previewGeneration)
-                  $("previewStatus").textContent =
-                    "试听已就绪：" + voice.name + "，请点击播放。";
+                if (run === previewGeneration) {
+                  status.textContent = "试听已就绪，点击播放";
+                  button.textContent = "▶";
+                  button.setAttribute("aria-label", "播放试听 " + voice.name);
+                }
               }
               return;
             }
             if (task.status === "failed")
               throw Error(task.error || "试听生成失败，请重试");
-            if (Date.now() >= deadline)
-              throw Error("试听生成仍在处理中，请稍后再次点击试听");
+            if (Date.now() >= deadline) throw Error("试听仍在生成，请稍后重试");
             await new Promise((resolve) => setTimeout(resolve, 1200));
           }
         } catch (e) {
-          if (run === previewGeneration)
-            $("previewStatus").textContent = "试听失败：" + e.message;
+          if (run === previewGeneration) {
+            status.textContent = "试听失败：" + e.message;
+            button.disabled = false;
+            button.textContent = "▶";
+            button.setAttribute("aria-label", "重试试听 " + voice.name);
+          }
         }
       }
       function renderPresets(

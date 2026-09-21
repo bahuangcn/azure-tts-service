@@ -214,3 +214,8 @@ MiniMax `get_voice` 实际可能只返回 `voice_id`、`voice_name`、`descripti
 分类规则只作用于接口实际返回的音色，不把文档中列出的其他音色直接添加为账号可用音色，也不改变 Azure 目录。
 
 参考：[官方系统音色表](https://platform.minimax.io/docs/faq/system-voice-id)、[MiniMax 官方音色参考](https://github.com/MiniMax-AI/skills/blob/main/skills/frontend-dev/references/minimax-voice-catalog.md)（2026-09-21 核对）。
+
+
+试听交互：播放器在对应音色条目内部展开，条目右上角播放键可暂停/继续；暂停保留播放器和进度。
+关闭按钮停止播放并收起播放器；同一时间只播放一个试听。切换试听音色、切换平台或将正在试听的音色筛出结果时停止旧试听。
+选择音色或展开更多结果保留仍可见的播放器节点；关闭后的延迟合成结果不会重新打开播放器。

@@ -16,6 +16,7 @@ azure.push({...voice('MiniMax-only','en-CA','Male'),provider:'minimax'});
 const calls = [];
 let preferences={preset:null,presets:[],default_preset_id:null};
 let nextPreset=0;
+let pendingPreview=null,holdPreview=false;
 const languages={azure:['zh','en'],minimax:['zh']};
 azure.push({...voice('German multilingual','de-DE','Female'),primary_languages:['de-DE'],facets:{language:['de-DE','en-US','zh-CN'],role_type:['老年男声']}});
 minimax.forEach(v=>v.facets.role_type=['青年']);
@@ -45,14 +46,15 @@ const dom = new JSDOM(readFileSync(path.join(__dirname,'../webui/index.html'),'u
     voices.forEach(v=>Object.entries(v.facets).forEach(([k,values])=>facets[k]=[...new Set([...(facets[k]||[]),...values])]));
     body={voices,facets};
    }
-   if(url.endsWith('/voices/preview'))body={task_id:'sample',status:'completed'};
+   if(url.endsWith('/voices/preview')){if(holdPreview)await new Promise(resolve=>pendingPreview=resolve);body={task_id:'sample',status:'completed'};}
    if(url.endsWith('/tts/sample'))body={task_id:'sample',status:'completed',audio_url:'/azure_api/tts/audio/sample'};
    return {ok:true,json:async()=>body,blob:async()=>new window.Blob(['audio'])};
   };
   window.URL.revokeObjectURL=()=>{};
   window.URL.createObjectURL=()=> 'blob:sample';
-  window.HTMLMediaElement.prototype.pause=()=>{};
-  window.HTMLMediaElement.prototype.play=async()=>{};
+  Object.defineProperty(window.HTMLMediaElement.prototype,'paused',{get(){return this._paused!==false;}});
+  window.HTMLMediaElement.prototype.pause=function(){this._paused=true;this.dispatchEvent(new window.Event('pause'));};
+  window.HTMLMediaElement.prototype.play=async function(){this._paused=false;this.dispatchEvent(new window.Event('play'));};
   window.HTMLElement.prototype.scrollIntoView=()=>{};
  }
 });
@@ -114,7 +116,26 @@ const settle=()=>new Promise(r=>setImmediate(r));
  assert.equal($('previewAudio').src,'blob:sample');assert.equal($('previewAudio').hidden,false);
  const preview=JSON.parse(calls.find(c=>c.url.endsWith('/voices/preview')).options.body);
  assert.equal(preview.provider,'minimax');assert.equal(preview.voice,'设计女声');assert.equal(preview.pitch,3);assert.equal(preview.speed,1.4);
- $('stopPreview').click();assert.equal($('previewPanel').hidden,true);
+ const playingAudio=$('previewAudio'), playingPanel=$('previewPanel');
+ assert.equal(playingPanel.closest('.voice-row'),d.querySelector('.preview-button').closest('.voice-row'));
+ assert.equal(playingAudio.paused,false);
+ d.querySelector('.preview-button').click();await settle();assert.equal(playingAudio.paused,true);assert.equal($('previewPanel'),playingPanel);assert.match($('previewStatus').textContent,/已暂停/);
+ const generated=calls.filter(c=>c.url.endsWith('/voices/preview')).length;
+ d.querySelector('.preview-button').click();await settle();assert.equal(playingAudio.paused,false);
+ assert.equal(calls.filter(c=>c.url.endsWith('/voices/preview')).length,generated,'Resume does not regenerate audio');
+ d.querySelector('.voice-option').click();assert.equal($('previewAudio'),playingAudio,'Selecting voice preserves player node');
+ $('showMore').click();assert.equal($('previewAudio'),playingAudio,'Expanding list preserves player node');
+ $('stopPreview').click();assert.equal($('previewPanel'),null);assert.equal(playingAudio.paused,true);
+ assert.equal(d.querySelector('.preview-button').getAttribute('aria-expanded'),'false');
+ holdPreview=true;d.querySelector('.preview-button').click();await settle();assert($('previewPanel'));
+ $('stopPreview').click();pendingPreview();await settle();assert.equal($('previewPanel'),null,'Late response cannot reopen closed player');holdPreview=false;
+ $('clearFilters').click();const previewButtons=d.querySelectorAll('.preview-button');
+ previewButtons[0].click();await settle();const firstAudio=$('previewAudio');
+ previewButtons[1].click();await settle();assert.equal(d.querySelectorAll('.preview-panel').length,1);assert.equal(firstAudio.paused,true);
+ assert.equal($('previewPanel').closest('.voice-row'),previewButtons[1].closest('.voice-row'));
+ $('filter-source').value='designed';$('filter-source').dispatchEvent(new w.Event('change'));assert.equal($('previewPanel'),null,'Hidden voice cannot keep playing');
+
+
 $('speed').value='0.5';await $('restorePreset').onclick();assert.equal($('speed').value,'1.4');assert.equal($('voice').value,'设计女声');
  assert(calls.every(c=>c.url.startsWith('/workbench_api/')));
  assert(calls.every(c=>!c.options.headers.Authorization),'No browser token');
