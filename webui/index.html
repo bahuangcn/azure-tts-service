@@ -517,21 +517,21 @@
                 (v.official?.Locale
                   ? [v.official.Locale]
                   : (v.facets.language || []).slice(0, 1));
-              const families = [...new Set(primary.map(languageFamily))];
+              const locales = [...new Set(primary)];
               return {
                 ...v,
                 facets: {
                   ...v.facets,
-                  language: families.length ? families : ["unknown"],
+                  language: locales.length ? locales : ["unknown"],
                 },
               };
             })
-            .filter((v) => v.facets.language.some((l) => allowed.has(l)))
+            .filter((v) => v.facets.language.some((l) => allowed.has(languageFamily(l))))
             .map((v) => ({
               ...v,
               facets: {
                 ...v.facets,
-                language: v.facets.language.filter((l) => allowed.has(l)),
+                language: v.facets.language.filter((l) => allowed.has(languageFamily(l))),
               },
             }));
           facetValues = {};

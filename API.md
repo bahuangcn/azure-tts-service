@@ -163,7 +163,7 @@ NODE_PATH=/tmp/story-voice-ui-test/node_modules node tests/workbench.cjs
 ## 工作台语言与默认配置
 
 `/tts/languages.html` 为语言配置页，先选择平台，再按语言族勾选该平台目录中的主语言；两个平台分别保存配置，默认 `zh`、`en`。
-同一语言的地区版本一起启用，多语言音色只按主语言归类（`primary_languages`），不会因附加语言混入；缺失语言信息的音色放在 `unknown`，需在页面显式勾选。
+同一语言的地区版本一起启用，工作台筛选保留完整地区代码与名称（例如 `en-US` 美国英语、`en-GB` 英国英语、`en-AU` 澳大利亚英语），不会合并为一个英语选项；多语言音色只按主语言归类（`primary_languages`），不会因附加语言混入；缺失语言信息的音色放在 `unknown`，需在页面显式勾选。
 此设置只控制工作台显示，不限制 Baby Story Creator 通过 API 使用其他语言音色。
 
 GET `/preferences?provider=azure|minimax` 返回当前客户端、指定平台的 `languages`（语言族代码数组）和 `preset`（可为空）。
