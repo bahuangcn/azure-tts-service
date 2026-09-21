@@ -190,6 +190,25 @@
         margin-top: 6px;
         line-height: 1.5;
       }
+      .style-tags {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 5px;
+        margin-top: 6px;
+      }
+      .style-tag {
+        display: inline-block;
+        padding: 2px 7px;
+        border-radius: 6px;
+        background: #e5ecf0;
+        color: #334653;
+        font-size: 12px;
+      }
+      .style-tag.matched {
+        background: #146c74;
+        color: white;
+        font-weight: 600;
+      }
       .selected-voice {
         color: #146c74;
         font-size: 13px;
@@ -274,6 +293,9 @@
             按语言、角色类型、来源和风格组合选择，筛选条件同时生效。
           </p>
           <div id="facets"></div>
+          <p class="muted" id="styleHint">
+            同一音色可有多个风格标签，各风格数量有重叠，不能相加；“全部”为去重后的音色数。音色卡片显示完整风格，深色标签表示当前筛选项。
+          </p>
           <details id="moreFilters">
             <summary>更多分类标签</summary>
             <div id="extraFacets"></div>
@@ -526,12 +548,16 @@
                 },
               };
             })
-            .filter((v) => v.facets.language.some((l) => allowed.has(languageFamily(l))))
+            .filter((v) =>
+              v.facets.language.some((l) => allowed.has(languageFamily(l))),
+            )
             .map((v) => ({
               ...v,
               facets: {
                 ...v.facets,
-                language: v.facets.language.filter((l) => allowed.has(languageFamily(l))),
+                language: v.facets.language.filter((l) =>
+                  allowed.has(languageFamily(l)),
+                ),
               },
             }));
           facetValues = {};
@@ -678,12 +704,34 @@
             String(v.id === $("voice").value),
           );
           name.textContent = v.name;
-          badges.textContent = ["language", "role_type", "source", "style"]
+          badges.textContent = ["language", "role_type", "source"]
             .flatMap((k) =>
               (v.facets[k] || []).slice(0, 2).map((val) => labelValue(k, val)),
             )
             .join(" · ");
           button.append(name, badges);
+          const styles = [...new Set(v.facets.style || [])];
+          const styleLabel = document.createElement("small");
+          styleLabel.textContent = styles.length
+            ? (v.provider === "minimax" ? "风格标签" : "支持风格") +
+              "（" +
+              styles.length +
+              "）："
+            : "风格：官方未标注";
+          button.append(styleLabel);
+          const styleTags = document.createElement("span");
+          styleTags.className = "style-tags";
+          for (const style of styles) {
+            const tag = document.createElement("span");
+            tag.className = "style-tag";
+            tag.textContent = labelValue("style", style);
+            if (style === $("filter-style").value) {
+              tag.classList.add("matched");
+              tag.setAttribute("aria-label", tag.textContent + "（当前筛选）");
+            }
+            styleTags.append(tag);
+          }
+          button.append(styleTags);
           button.onclick = () => {
             $("voice").value = v.id;
             renderVoices();

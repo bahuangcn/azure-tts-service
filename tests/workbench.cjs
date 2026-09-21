@@ -6,6 +6,8 @@ const path = require('node:path');
 const voice = (id, language, gender, source='system') => ({id,name:id,facets:{language:[language],gender:[gender],role_type:[gender==='Female'?'青年女声':'青年男声'],source:[source],style:['温柔']},official:{voice_id:id}});
 const azure = [voice('zh-CN-XiaochenNeural','zh-CN','Female'),voice('中文男声','zh-CN','Male'),voice('English','en-US','Female'),voice('Japanese','ja-JP','Female')];
 const minimax = [voice('设计女声','zh-CN','Female','designed'),voice('官方男声','zh-CN','Male')];
+azure[0].facets.style=['friendly','angry','sad','cheerful'];
+azure[1].facets.style=[];
 azure.forEach(v=>v.provider='azure');
 minimax.forEach(v=>v.provider='minimax');
 azure.push({...voice('British','en-GB','Female'),provider:'azure'}, {...voice('Australian','en-AU','Female'),provider:'azure'});
@@ -39,6 +41,16 @@ const settle=()=>new Promise(r=>setImmediate(r));
  await settle();
  assert.equal($('filter-gender'),null);assert.equal($('filter-age'),null);assert.equal($('filter-role'),null);
  assert.equal($('token'),null,'No key prompt');
+ const firstCard=d.querySelector('.voice-option');
+ assert.deepEqual([...firstCard.querySelectorAll('.style-tag')].map(t=>t.textContent),['友好','生气','悲伤','欢快']);
+ assert.match(d.querySelectorAll('.voice-option')[1].textContent,/风格：官方未标注/);
+ for (const style of ['angry','sad']) {
+  $('filter-style').value=style;$('filter-style').dispatchEvent(new w.Event('change'));
+  assert.equal(d.querySelectorAll('.voice-option').length,1);
+  assert.equal(d.querySelectorAll('.voice-option .style-tag').length,4,'Show all styles even when filtered');
+  assert.equal(d.querySelector('.style-tag.matched').textContent,style==='angry'?'生气':'悲伤');
+ }
+ $('clearFilters').click();
  assert.match($('connection').textContent,/Azure Speech · 已启用 2 种语言/);
  assert.equal(d.querySelectorAll('select[data-key]').length,4);
  assert.equal(d.querySelectorAll('.voice-option').length,5);
