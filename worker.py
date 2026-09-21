@@ -123,7 +123,7 @@ def _get_audio_duration(audio_path: str) -> int | None:
 
 
 # ── 单次合成 ───────────────────────────────────────────────────────────────
-def _synth_one(text: str, voice: str, rate: str, output_path: str, pitch: str = "+0Hz", sentence_events: list | None = None) -> tuple:
+def _synth_one(text: str, voice: str, rate: str, output_path: str, pitch: str = "+0Hz", sentence_events: list | None = None, ssml_content: str | None = None) -> tuple:
     """
     对单段文本执行一次 SDK 合成，返回 (word_timings, total_ms)。
 
@@ -169,6 +169,12 @@ def _synth_one(text: str, voice: str, rate: str, output_path: str, pitch: str = 
         f'<prosody rate={quoteattr(rate)} pitch={quoteattr(pitch)}>{xml_escape(text)}</prosody>'
         f'</voice></speak>'
     )
+
+    if ssml_content is not None:
+        locale = '-'.join(voice.split('-')[:2])
+        ssml = (f'<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" '
+                f'xmlns:mstts="https://www.w3.org/2001/mstts" xml:lang={quoteattr(locale)}>'
+                f'<voice name={quoteattr(voice)}>{ssml_content}</voice></speak>')
 
     # ── 3. 注册词边界回调 ──────────────────────────────────────────────
     timings = []

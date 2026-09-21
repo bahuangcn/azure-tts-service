@@ -68,6 +68,8 @@ def init_db():
 
     conn.execute("CREATE TABLE IF NOT EXISTS preferences (owner TEXT PRIMARY KEY, data TEXT NOT NULL)")
 
+    conn.execute("CREATE TABLE IF NOT EXISTS reading_plans (id TEXT PRIMARY KEY, owner TEXT NOT NULL, data TEXT NOT NULL, created_at TEXT NOT NULL)")
+
     # 存量数据回填：确保现有行 mode = 'sdk'
     conn.execute("UPDATE tasks SET mode = 'sdk' WHERE mode IS NULL")
     conn.commit()

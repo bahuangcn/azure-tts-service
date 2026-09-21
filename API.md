@@ -225,3 +225,25 @@ MiniMax `get_voice` 实际可能只返回 `voice_id`、`voice_name`、`descripti
 
 
 原生时间信息参考：[Azure 合成边界事件](https://learn.microsoft.com/en-us/azure/ai-services/speech-service/how-to-speech-synthesis#subscribe-to-synthesizer-events)、[MiniMax 字幕参数](https://platform.minimax.io/docs/api-reference/speech-t2a-http)（2026-09-21 已用实际请求验证）。
+
+## AI 朗读编排
+
+工作台选择音色并输入原文后，可选择「妈妈讲故事」「睡前安抚」「自然讲述」或自定义要求，生成并查看编排，试听第一段，再勾选应用后生成完整音频。修改原文、音色、语速等输入会使旧编排失效。
+
+POST `/reading-plans`（相同鉴权）示例：
+
+```json
+{"text":"很久以前，小兔子看着月亮。妈妈轻声讲起了故事。","provider":"azure","voice":"zh-CN-XiaoxiaoNeural","scene":"mother","instruction":"温暖舒缓，避免夸张表演","speed":0.85,"pitch":0}
+```
+
+返回 `id`、`summary`、`blocks`、`warnings`、`capability_note`。段落包含服务端保留的原文、语速、音调、情绪、停顿位置及强调词。模型只生成控制参数，不生成或替换故事正文；找不到原文对应位置的控制会跳过并报告警告。`pitch` 单位为 Azure Hz / MiniMax 半音。文本上限仍为 20,000 字符。
+
+- GET `/reading-plans/{id}`：获取自己的完整编排，可保存为 JSON。
+- POST `/reading-plans/{id}/preview`：试听第一段，返回普通任务 ID，通过现有任务和音频接口获取结果；试听不出现在故事历史列表。
+- POST `/tts`：在原请求中增加 `arrangement_id`。原文、平台、音色必须与编排一致，否则返回 409；使用编排中的语速、音调等控制。无该字段则保留普通合成方式。
+
+Azure 普通 Neural 音色通过 SSML 执行停顿、语速、音调及该音色支持的风格，强调词通过轻微放慢突出。当前 HD 音色精细控制支持不完整，编排接口会要求换用普通 Neural 音色。MiniMax 使用段落级语速、音调、情绪和段内停顿；强调词使用前后留白，不承诺词级重音控制。
+
+编排合成按自然段落打包（每块最多 1,400 字符），允许不同段落采用不同语气，不为获取句子时间戳而逐句合成。时间轴仍来自平台原生数据；结果 `metadata.synthesis_mode=ai_arranged_blocks`，`metadata.reading_plan` 保留已执行编排。
+
+编排模型使用服务端已有 `MINIMAX_API_KEY`，可通过 `TTS_PLANNER_MODEL` 配置，默认 `MiniMax-M3`；正文及朗读要求会发送给 MiniMax 文本模型。请求沿用客户端鉴权、限流及所有者隔离，模型凭证不返回浏览器。

@@ -212,6 +212,44 @@
       #moreFilters {
         margin-top: 16px;
       }
+      .reading-plan {
+        margin-top: 20px;
+        padding: 16px;
+        border: 1px solid #c9dfe0;
+        border-radius: 10px;
+        background: #f5faf9;
+      }
+      .reading-plan h3 {
+        margin: 0 0 8px;
+        font-size: 16px;
+      }
+      .reading-plan textarea {
+        height: 76px;
+      }
+      .reading-plan label.plan-toggle {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+      .plan-toggle input {
+        width: auto;
+      }
+      .plan-block {
+        padding: 12px 0;
+        border-top: 1px solid #dce5e9;
+      }
+      .plan-block p {
+        margin: 6px 0;
+        line-height: 1.6;
+      }
+      #planDetails {
+        max-height: 320px;
+        overflow-y: auto;
+      }
+      #planPlayer[hidden],
+      #planResult[hidden] {
+        display: none;
+      }
       .voice-list {
         max-height: 420px;
         overflow-y: auto;
@@ -505,6 +543,54 @@
             保存音色、平台、语速、音调及筛选条件。下次打开自动使用最近保存或加载的配置。
           </p>
           <p id="presetStatus" class="muted" role="status"></p>
+          <section class="reading-plan" aria-label="AI 朗读编排">
+            <h3>AI 朗读编排</h3>
+            <p class="muted">
+              根据故事和朗读要求安排节奏，保留原文。上方语速、音调作为参考；启用后使用编排中的各段参数。
+            </p>
+            <label for="planScene">朗读场景</label>
+            <select id="planScene">
+              <option value="mother">妈妈讲故事 · 温暖舒缓</option>
+              <option value="bedtime">睡前安抚 · 轻柔留白</option>
+              <option value="natural">自然讲述 · 流畅亲切</option>
+              <option value="custom">自定义要求</option>
+            </select>
+            <label for="planInstruction">补充要求（可选）</label>
+            <textarea
+              id="planInstruction"
+              maxlength="1000"
+              placeholder="像妈妈在床边轻声讲故事，节奏慢一些，情绪自然克制。"
+            ></textarea>
+            <button id="generatePlan">生成朗读编排</button>
+            <p id="planStatus" class="muted" role="status"></p>
+            <div id="planResult" hidden>
+              <p id="planSummary"></p>
+              <p id="planCapabilities" class="muted"></p>
+              <p id="planWarnings" class="muted"></p>
+              <details open>
+                <summary>查看各段编排</summary>
+                <div id="planDetails"></div>
+              </details>
+              <label class="plan-toggle"
+                ><input
+                  id="applyPlan"
+                  type="checkbox"
+                />使用此编排生成全文</label
+              >
+              <div class="presets">
+                <button id="previewPlan">试听第一段</button
+                ><button id="downloadPlan">下载编排</button>
+              </div>
+              <div id="planPlayer" hidden>
+                <p id="planPreviewStatus" class="muted" role="status"></p>
+                <audio id="planAudio" controls hidden></audio
+                ><button id="closePlanPlayer" class="secondary">
+                  关闭试听
+                </button>
+              </div>
+            </div>
+          </section>
+
           <button id="submit" disabled>生成音频与字幕</button>
           <p id="error" class="error" role="alert"></p>
         </div>
@@ -566,6 +652,10 @@
         $("error").textContent = e.message;
       }
       const coreDimensions = ["language", "role_type", "source", "style"];
+      let readingPlan = null,
+        readingFingerprint = "",
+        planPreviewRun = 0,
+        planAudioUrl = null;
       let preferences = { languages: ["zh", "en"], preset: null },
         restoring = null;
       const languageFamily = (value) => value.split(/[-_]/)[0].toLowerCase();
@@ -586,6 +676,14 @@
         GA: "正式版",
         Preview: "预览版",
         Neural: "神经网络",
+        neutral: "自然",
+        calm: "平静",
+        happy: "愉快",
+        surprised: "惊喜",
+        fluent: "流畅",
+        whisper: "轻声",
+        gentle: "温柔",
+        affectionate: "亲切",
         chat: "聊天",
         cheerful: "欢快",
         friendly: "友好",
@@ -898,6 +996,7 @@
         $("showMore").hidden = visibleCount >= filteredVoices.length;
       }
       function voiceInfo() {
+        invalidatePlan();
         const v = catalog.find((v) => v.id === $("voice").value);
         $("selectedVoice").textContent = v
           ? "已选择：" + v.name
@@ -905,6 +1004,7 @@
         $("voiceInfo").textContent = JSON.stringify(v?.official || {}, null, 2);
       }
       function updateParameters() {
+        invalidatePlan();
         const speed = Number($("speed").value),
           pitch = Number($("pitch").value);
         $("speedValue").textContent =
@@ -1415,11 +1515,168 @@
         }
       })();
       $("refresh").onclick = refresh;
+      function planInput() {
+        return {
+          text: $("text").value,
+          provider: $("provider").value,
+          voice: $("voice").value,
+          scene: $("planScene").value,
+          instruction: $("planInstruction").value,
+          speed: Number($("speed").value),
+          pitch: Number($("pitch").value),
+        };
+      }
+      function invalidatePlan() {
+        if (!readingPlan || readingFingerprint === JSON.stringify(planInput()))
+          return;
+        readingPlan = null;
+        $("applyPlan").checked = false;
+        $("planResult").hidden = true;
+        $("planStatus").textContent =
+          "正文、音色或设置已变化，请重新生成编排。";
+        closePlanPlayer();
+      }
+      function closePlanPlayer() {
+        planPreviewRun++;
+        const audio = $("planAudio");
+        if (audio.hasAttribute("src")) audio.pause();
+        audio.removeAttribute("src");
+        audio.hidden = true;
+        if (planAudioUrl) URL.revokeObjectURL(planAudioUrl);
+        planAudioUrl = null;
+        $("planPlayer").hidden = true;
+      }
+      for (const id of ["text", "planScene", "planInstruction"])
+        $(id).addEventListener("input", invalidatePlan);
+      $("closePlanPlayer").onclick = closePlanPlayer;
+      $("generatePlan").onclick = async () => {
+        const input = planInput(),
+          signature = JSON.stringify(input);
+        if (!input.text.trim() || !input.voice) {
+          $("planStatus").textContent = "请先填写故事正文并选择音色。";
+          return;
+        }
+        $("generatePlan").disabled = true;
+        $("planStatus").textContent = "AI 正在分析故事并安排朗读节奏…";
+        try {
+          const result = await (
+            await api("/reading-plans", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(input),
+            })
+          ).json();
+          if (signature !== JSON.stringify(planInput())) {
+            $("planStatus").textContent =
+              "生成期间输入已变化，请按最新内容重新编排。";
+            return;
+          }
+          closePlanPlayer();
+          readingPlan = result;
+          readingFingerprint = signature;
+          $("planSummary").textContent = result.summary;
+          $("planCapabilities").textContent = result.capability_note;
+          $("planWarnings").textContent = (result.warnings || []).join(" ");
+          $("planDetails").replaceChildren();
+          for (const [index, block] of result.blocks.entries()) {
+            const item = document.createElement("div");
+            item.className = "plan-block";
+            for (const text of [
+              "第 " +
+                (index + 1) +
+                " 段 · " +
+                block.speed +
+                "× · 音调 " +
+                block.pitch +
+                (result.provider === "azure" ? " Hz" : " 半音") +
+                " · " +
+                labelValue("style", block.emotion),
+              block.text,
+              block.explanation,
+              "停顿：" +
+                (block.pauses
+                  .map(
+                    (p) =>
+                      "「" + p.after + "」后 " + p.duration_ms / 1000 + " 秒",
+                  )
+                  .join("；") || "自然停顿"),
+              "突出词语：" +
+                (block.emphasis.map((e) => e.text).join("、") || "自然表达"),
+            ]) {
+              const line = document.createElement("p");
+              line.textContent = text;
+              item.append(line);
+            }
+            $("planDetails").append(item);
+          }
+          $("planResult").hidden = false;
+          $("applyPlan").checked = true;
+          $("planStatus").textContent =
+            "编排已就绪，原文未改动。可先试听，再生成全文。";
+        } catch (e) {
+          $("planStatus").textContent = e.message;
+        } finally {
+          $("generatePlan").disabled = false;
+        }
+      };
+      $("downloadPlan").onclick = () => {
+        if (readingPlan)
+          download("/reading-plans/" + readingPlan.id, "朗读编排.json");
+      };
+      $("previewPlan").onclick = async () => {
+        invalidatePlan();
+        if (!readingPlan) return;
+        closePlanPlayer();
+        stopPreview();
+        const run = planPreviewRun;
+        $("planPlayer").hidden = false;
+        $("planPreviewStatus").textContent = "正在生成编排试听…";
+        try {
+          let task = await (
+            await api("/reading-plans/" + readingPlan.id + "/preview", {
+              method: "POST",
+            })
+          ).json();
+          const deadline = Date.now() + 240000;
+          while (run === planPreviewRun) {
+            task = await (await api("/tts/" + task.task_id)).json();
+            if (run !== planPreviewRun) return;
+            if (task.status === "completed") {
+              const blob = await (
+                await api(task.audio_url.replace("/azure_api", ""))
+              ).blob();
+              if (run !== planPreviewRun) return;
+              planAudioUrl = URL.createObjectURL(blob);
+              const audio = $("planAudio");
+              audio.src = planAudioUrl;
+              audio.hidden = false;
+              audio.onplay = () =>
+                document.querySelectorAll("audio").forEach((other) => {
+                  if (other !== audio && !other.paused) other.pause();
+                });
+              $("planPreviewStatus").textContent = "第一段编排试听";
+              try {
+                await audio.play();
+              } catch {
+                $("planPreviewStatus").textContent = "试听已就绪，请点击播放。";
+              }
+              return;
+            }
+            if (task.status === "failed") throw Error(task.error || "试听失败");
+            if (Date.now() > deadline) throw Error("仍在合成，请稍后重试");
+            await new Promise((resolve) => setTimeout(resolve, 1200));
+          }
+        } catch (e) {
+          if (run === planPreviewRun)
+            $("planPreviewStatus").textContent = e.message;
+        }
+      };
       $("submit").onclick = async () => {
         try {
           $("error").textContent = "";
           if (!$("voice").value) throw Error("请选择音色");
           $("submit").disabled = true;
+          invalidatePlan();
           const speed = Number($("speed").value),
             pitch = Number($("pitch").value);
           await api("/tts", {
@@ -1427,6 +1684,8 @@
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               text: $("text").value,
+              arrangement_id:
+                $("applyPlan").checked && readingPlan ? readingPlan.id : null,
               provider: $("provider").value,
               voice: $("voice").value,
               speed,

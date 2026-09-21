@@ -24,6 +24,7 @@ class SynthesisRequest(BaseModel):
     speed: float = Field(default=1, ge=0.5, le=2)
     minimax_pitch: int = Field(default=0, ge=-12, le=12)
     model: Literal['speech-2.8-hd', 'speech-2.8-turbo', 'speech-2.6-hd', 'speech-2.6-turbo', 'speech-02-hd', 'speech-02-turbo'] | None = None
+    arrangement_id: str | None = Field(default=None, max_length=80)
     sentences: list[str] | None = Field(default=None, min_length=1, max_length=2000)
 
     @model_validator(mode='after')
@@ -83,12 +84,17 @@ def voices(request: Request, provider: Literal['azure', 'minimax'] = 'azure',
 
 @router.post('/tts', status_code=202)
 def create_tts_task(body: SynthesisRequest, client: str = Depends(authenticate)):
-    return enqueue_synthesis(body, client)
+    plan = get_reading_plan(body.arrangement_id, client) if body.arrangement_id else None
+    if plan and (plan['source_text'] != body.text or plan['provider'] != body.provider or plan['voice'] != body.voice):
+        raise HTTPException(409, '原文、平台或音色已改变，请重新生成 AI 编排。')
+    return enqueue_synthesis(body, client, arrangement=plan)
 
-def enqueue_synthesis(body, client, preview=False):
+def enqueue_synthesis(body, client, preview=False, arrangement=None):
     if not (SPEECH_KEY if body.provider == 'azure' else MINIMAX_API_KEY):
         raise HTTPException(503, body.provider + ' is not configured')
     options = body.model_dump()
+    if arrangement:
+        options["arrangement"] = arrangement
     if preview:
         options['preview'] = True
     serialized = json.dumps(options, ensure_ascii=False, sort_keys=True)
@@ -330,3 +336,65 @@ def preview_voice(body: VoicePreviewRequest, client: str = Depends(authenticate)
         speed=body.speed, rate=f'{round((body.speed-1)*100)}%',
         pitch=f'{body.pitch}Hz', minimax_pitch=body.pitch if body.provider == 'minimax' else 0)
     return enqueue_synthesis(request, client, preview=True)
+
+
+class ReadingPlanRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=20000)
+    provider: Literal['azure', 'minimax']
+    voice: str = Field(min_length=1, max_length=200)
+    scene: Literal['mother', 'bedtime', 'natural', 'custom'] = 'mother'
+    instruction: str = Field(default='', max_length=1000)
+    speed: float = Field(default=1, ge=0.5, le=2)
+    pitch: int = Field(default=0, ge=-50, le=50)
+
+
+def get_reading_plan(plan_id, client):
+    with get_db() as conn:
+        row = conn.execute('SELECT data FROM reading_plans WHERE id=? AND owner=?', (plan_id, client)).fetchone()
+    if not row:
+        raise HTTPException(404, 'reading plan not found')
+    return json.loads(row['data'])
+
+
+@router.post('/reading-plans', status_code=201)
+def create_reading_plan(body: ReadingPlanRequest, client: str = Depends(authenticate)):
+    from reading_plan import build_plan
+    if not body.text.strip():
+        raise HTTPException(422, '请填写故事正文')
+    if body.provider == 'minimax' and re_reserved(body.text):
+        raise HTTPException(422, '编排需要纯文本，请移除手工停顿标记。')
+    limit_submission(client)
+    try:
+        voice = next((v for v in voice_catalog(body.provider) if v['id'] == body.voice), None)
+        if not voice:
+            raise HTTPException(404, 'voice not found')
+        plan = build_plan(body.text, body.provider, voice, body.scene, body.instruction, body.speed, body.pitch)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from None
+    except RuntimeError as exc:
+        raise HTTPException(502, str(exc)) from None
+    plan['id'] = uuid.uuid4().hex
+    with get_db() as conn:
+        conn.execute('INSERT INTO reading_plans(id,owner,data,created_at) VALUES(?,?,?,?)',
+                     (plan['id'], client, json.dumps(plan, ensure_ascii=False), datetime.now(timezone.utc).isoformat()))
+        conn.commit()
+    return plan
+
+
+def re_reserved(text):
+    import re
+    return bool(re.search(r'<#[^>]*#>', text))
+
+
+@router.get('/reading-plans/{plan_id}')
+def read_reading_plan(plan_id: str, client: str = Depends(authenticate)):
+    return get_reading_plan(plan_id, client)
+
+
+@router.post('/reading-plans/{plan_id}/preview', status_code=202)
+def preview_reading_plan(plan_id: str, client: str = Depends(authenticate)):
+    plan = get_reading_plan(plan_id, client)
+    # Audition the first planned paragraph using exactly the full-plan controls.
+    preview = {**plan, 'blocks': plan['blocks'][:1]}
+    body = SynthesisRequest(text=preview['blocks'][0]['text'], provider=plan['provider'], voice=plan['voice'])
+    return enqueue_synthesis(body, client, preview=True, arrangement=preview)

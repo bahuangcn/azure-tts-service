@@ -8,6 +8,7 @@ import wave
 from pathlib import Path
 from config import AUDIO_DIR, MINIMAX_MODEL
 from providers import minimax_post
+from reading_plan import minimax_text, azure_content
 
 
 def sentences(text):
@@ -80,9 +81,11 @@ def native_words_to_sentences(text, words, requested=None):
 def parse_minimax_timings(raw, text):
     words, segments = [], []
     for segment in raw:
-        segments.append({'text': segment['text'], 'start_ms': round(segment['time_begin']),
+        segments.append({'text': re.sub(r'<#[^>]*#>', '', segment['text']), 'start_ms': round(segment['time_begin']),
                          'end_ms': round(segment['time_end'])})
         for word in segment.get('timestamped_words', []):
+            if re.fullmatch(r'<#[^>]*#>', word['word']):
+                continue
             words.append({'text': word['word'], 'start_ms': round(word['time_begin']),
                           'end_ms': round(word['time_end']), 'text_start': word.get('word_begin'),
                           'text_end': word.get('word_end')})
@@ -96,7 +99,9 @@ def synthesize_story(task):
     options = json.loads(task['options'] or '{}')
     # Keep all nearby sentences together. This bound is for request size and
     # latency, not subtitle segmentation; no per-sentence synthesis calls.
-    blocks = split_text(task['text'], 3000)
+    arrangement = options.get('arrangement')
+    controls = arrangement['blocks'] if arrangement else []
+    blocks = [b['text'] for b in controls] if controls else split_text(task['text'], 3000)
     timings, words, provider_metadata, warnings = [], [], [], []
     frames_total = 0
     final = AUDIO_DIR / (task['task_id'] + '.mp3')
@@ -108,12 +113,14 @@ def synthesize_story(task):
             for block_index, text in enumerate(blocks):
                 raw_audio, pcm = root / 'block.mp3', root / 'block.wav'
                 block_words, block_sentences = [], []
+                control = controls[block_index] if controls else None
                 if task['provider'] == 'minimax':
                     data = minimax_post('/v1/t2a_v2', {
-                        'model': options.get('model') or MINIMAX_MODEL, 'text': text,
+                        'model': options.get('model') or MINIMAX_MODEL, 'text': minimax_text(control) if control else text,
                         'stream': False, 'output_format': 'hex', 'subtitle_enable': True, 'subtitle_type': 'word',
-                        'voice_setting': {'voice_id': task['voice'], 'speed': options.get('speed', 1),
-                                          'pitch': options.get('minimax_pitch', 0), 'vol': 1},
+                        'voice_setting': {'voice_id': task['voice'], 'speed': control['speed'] if control else options.get('speed', 1),
+                                          'pitch': control['pitch'] if control else options.get('minimax_pitch', 0), 'vol': 1,
+                                          **({'emotion': control['emotion']} if control and control['emotion'] != 'neutral' else {})},
                         'audio_setting': {'format': 'mp3', 'sample_rate': 32000, 'bitrate': 128000, 'channel': 1}})
                     audio = (data.get('data') or {}).get('audio')
                     if not audio:
@@ -134,7 +141,7 @@ def synthesize_story(task):
                                               'subtitle_data': raw_subtitles, 'timing_source': source})
                 else:
                     block_words, _ = _synth_one(text, task['voice'], task['rate'], str(raw_audio), task['pitch'],
-                                               sentence_events=block_sentences)
+                                               sentence_events=block_sentences, **({"ssml_content": azure_content(control)} if control else {}))
                     source = 'azure_sentence_boundary'
                     if not block_sentences:
                         block_sentences = native_words_to_sentences(text, block_words)
@@ -174,7 +181,8 @@ def synthesize_story(task):
         total_ms=round(frames_total * 1000 / 32000), word_timings=json.dumps(words, ensure_ascii=False),
         sentence_timings=json.dumps(timings, ensure_ascii=False), metadata=json.dumps({
             'timing_source': 'provider_native', 'timing_sources': sorted(sources),
-            'synthesis_mode': 'continuous_blocks', 'block_count': len(blocks),
+            'synthesis_mode': 'ai_arranged_blocks' if arrangement else 'continuous_blocks', 'block_count': len(blocks),
+            'reading_plan': arrangement,
             'sample_rate': 32000, 'channels': 1, 'format': 'mp3', 'size_bytes': final.stat().st_size,
             'word_timings_available': bool(words), 'timing_warnings': warnings,
             'provider_segments': provider_metadata}, ensure_ascii=False))
