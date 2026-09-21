@@ -141,3 +141,64 @@ def test_platform_languages_and_role_sources():
     assert azure['facets']['role_type']==['未标注']
     assert azure['role_type_source']=='RolePlayList'
     assert normalize('minimax',{'voice_id':'b','age':'青年','role':'Narrator'})['facets']['role_type']==['青年']
+
+
+def test_named_presets_crud_and_owner_isolation():
+    body={'name':'睡前故事','provider':'azure','voice':'zh-CN-XiaochenNeural','speed':0.8,'pitch':-4,'filters':{'language':'zh-CN'}}
+    first=client.post('/azure_api/presets',headers=a,json=body)
+    assert first.status_code==201
+    first_id=first.json()['default_preset_id']
+    second=client.post('/azure_api/presets',headers=a,json={**body,'name':'English','voice':'en-US-JennyNeural','speed':1.2})
+    second_id=second.json()['default_preset_id']
+    assert first_id!=second_id
+    assert len(second.json()['presets'])>=2
+    loaded=client.post(f'/azure_api/presets/{first_id}/load',headers=a).json()
+    assert loaded['preset']['speed']==0.8 and loaded['default_preset_id']==first_id
+    assert client.post(f'/azure_api/presets/{first_id}/load',headers=b).status_code==404
+    assert client.put(f'/azure_api/presets/{first_id}',headers=b,json=body).status_code==404
+    assert client.delete(f'/azure_api/presets/{first_id}',headers=b).status_code==404
+    updated=client.put(f'/azure_api/presets/{first_id}',headers=a,json={**body,'name':'改名','speed':0.9}).json()
+    assert updated['preset']['speed']==0.9
+    assert client.delete(f'/azure_api/presets/{first_id}',headers=a).status_code==200
+    saved=client.get('/azure_api/preferences',headers=a).json()
+    assert saved['preset'] is None and any(p['id']==second_id for p in saved['presets'])
+    assert client.post('/azure_api/presets',headers=a,json={**body,'name':'  '}).status_code==422
+    assert client.post('/azure_api/presets',json=body).status_code==401
+
+
+def test_legacy_named_preset_migration():
+    import json
+    from routes import read_preferences
+    old={'languages':['zh'],'preset':{'provider':'azure','voice':'old','speed':1,'pitch':0,'filters':{}}}
+    with get_db() as conn:
+        conn.execute('INSERT INTO preferences(owner,data) VALUES(?,?)',('migration-test',json.dumps(old)))
+        conn.commit()
+        migrated=read_preferences(conn,'migration-test')
+    assert migrated['presets'][0]['voice']=='old'
+    assert migrated['default_preset_id']=='legacy-default'
+    assert migrated['provider_languages']=={'azure':['zh'],'minimax':['zh']}
+
+
+def test_preview_cache_parameters_and_isolation(monkeypatch):
+    import routes, json
+    monkeypatch.setattr(routes,'MINIMAX_API_KEY','test')
+    monkeypatch.setattr(routes,'voice_catalog',lambda provider:[normalize(provider,{'ShortName':'preview-en','Locale':'en-GB'})] if provider=='azure' else [normalize(provider,{'voice_id':'preview-zh','language':'zh-CN'})])
+    for provider, voice in [('azure','preview-en'),('minimax','preview-zh')]:
+        body={'provider':provider,'voice':voice,'speed':0.8,'pitch':-3}
+        result=client.post('/azure_api/voices/preview',headers=a,json=body)
+        assert result.status_code==202
+        tid=result.json()['task_id']
+        assert client.post('/azure_api/voices/preview',headers=a,json=body).json()['task_id']==tid
+        assert client.post('/azure_api/voices/preview',headers=b,json=body).json()['task_id']!=tid
+        assert client.get('/azure_api/tts/'+tid,headers=b).status_code==404
+        assert tid not in [t['task_id'] for t in client.get('/azure_api/tts',headers=a).json()]
+        with get_db() as conn:
+            task=dict(conn.execute('SELECT * FROM tasks WHERE task_id=?',(tid,)).fetchone())
+        opts=json.loads(task['options'])
+        assert opts['preview'] is True and opts['speed']==0.8 and opts['pitch']=='-3Hz'
+        assert opts['minimax_pitch']==(-3 if provider=='minimax' else 0)
+        assert ('Hello' in task['text']) == (provider=='azure')
+        assert client.post('/azure_api/voices/preview',headers=a,json={**body,'voice':'wrong-platform'}).status_code==404
+        assert client.post('/azure_api/voices/preview',headers=a,json={**body,'speed':1.1}).json()['task_id']!=tid
+    assert client.post('/azure_api/voices/preview',headers=a,json={'provider':'minimax','voice':'preview-zh','pitch':20}).status_code==422
+    assert client.post('/azure_api/voices/preview',json={'provider':'azure','voice':'preview-en'}).status_code==401

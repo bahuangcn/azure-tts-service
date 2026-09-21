@@ -219,6 +219,27 @@
         display: grid;
         gap: 8px;
       }
+      .voice-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 8px;
+        align-items: start;
+      }
+      .preview-button {
+        margin-top: 8px;
+        background: #e7eff1;
+        color: #244b58;
+      }
+      .preview-panel {
+        padding: 12px;
+        border: 1px solid #dce5e9;
+        border-radius: 8px;
+        background: #f7fafb;
+        margin-top: 12px;
+      }
+      .preview-panel[hidden] {
+        display: none;
+      }
       .voice-option {
         text-align: left;
         width: 100%;
@@ -358,6 +379,14 @@
             <span id="count" role="status"></span
             ><button id="clearFilters" class="secondary">重置筛选</button>
           </div>
+          <div id="previewPanel" class="preview-panel" hidden>
+            <p id="previewStatus" class="muted" role="status"></p>
+            <audio id="previewAudio" controls hidden></audio>
+            <button id="stopPreview" class="secondary">停止试听</button>
+          </div>
+          <p class="muted">
+            试听按当前语速、音调生成短句原声，不应用风格筛选。首次生成需稍候，相同参数再次试听直接复用。
+          </p>
           <div
             id="voiceList"
             class="voice-list"
@@ -429,10 +458,27 @@
             每句单独合成、测量后拼接；句间会保留停顿。最多 20,000 字、200
             句，每句最多 3,000 字。
           </p>
+          <label for="presetSelect">已保存配置</label>
+          <select id="presetSelect">
+            <option value="">选择配置</option>
+          </select>
           <div class="presets">
-            <button id="savePreset">保存为默认配置</button
-            ><button id="restorePreset">恢复默认配置</button>
+            <button id="restorePreset" disabled>加载所选配置</button>
+            <button id="deletePreset" disabled>删除所选配置</button>
           </div>
+          <label for="presetName">配置名称</label>
+          <input
+            id="presetName"
+            maxlength="60"
+            placeholder="例如：中文睡前故事、英文旁白"
+          />
+          <div class="presets">
+            <button id="savePreset">另存为新配置</button>
+            <button id="updatePreset" disabled>更新所选配置</button>
+          </div>
+          <p class="muted">
+            保存音色、平台、语速、音调及筛选条件。下次打开自动使用最近保存或加载的配置。
+          </p>
           <p id="presetStatus" class="muted" role="status"></p>
           <button id="submit" disabled>生成音频与字幕</button>
           <p id="error" class="error" role="alert"></p>
@@ -562,6 +608,7 @@
         );
       }
       async function loadVoices() {
+        stopPreview();
         const generation = ++loading;
         const provider = $("provider").value;
         const platform = provider === "azure" ? "Azure Speech" : "MiniMax";
@@ -584,6 +631,7 @@
           ]);
           if (generation !== loading) return;
           preferences = config;
+          renderPresets();
           const allowed = new Set(config.languages);
           catalog = data.voices
             .filter((v) => v.provider === provider || !v.provider)
@@ -791,7 +839,15 @@
             renderVoices();
             voiceInfo();
           };
-          $("voiceList").append(button);
+          const row = document.createElement("div"),
+            previewButton = document.createElement("button");
+          row.className = "voice-row";
+          previewButton.className = "preview-button";
+          previewButton.textContent = "试听";
+          previewButton.setAttribute("aria-label", "试听 " + v.name);
+          previewButton.onclick = () => previewVoice(v);
+          row.append(button, previewButton);
+          $("voiceList").append(row);
         }
         $("showMore").hidden = visibleCount >= filteredVoices.length;
       }
@@ -1024,12 +1080,107 @@
           }),
       );
       updateParameters();
-      async function restorePreset() {
-        const preset = preferences.preset;
-        if (!preset) {
-          $("presetStatus").textContent = "尚未保存默认配置";
-          return;
+      let previewGeneration = 0,
+        previewUrl = null;
+      function stopPreview() {
+        previewGeneration++;
+        const audio = $("previewAudio");
+        if (audio.hasAttribute("src")) audio.pause();
+        audio.removeAttribute("src");
+        audio.hidden = true;
+        if (previewUrl) URL.revokeObjectURL(previewUrl);
+        previewUrl = null;
+        $("previewPanel").hidden = true;
+      }
+      $("stopPreview").onclick = stopPreview;
+      async function previewVoice(voice) {
+        stopPreview();
+        const run = previewGeneration;
+        $("previewPanel").hidden = false;
+        $("previewPanel").scrollIntoView({
+          block: "nearest",
+          behavior: "smooth",
+        });
+        document.querySelectorAll("audio").forEach((audio) => {
+          if (!audio.paused) audio.pause();
+        });
+        $("previewStatus").textContent = "正在生成试听：" + voice.name + "…";
+        try {
+          let task = await (
+            await api("/voices/preview", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                provider: voice.provider || $("provider").value,
+                voice: voice.id,
+                speed: Number($("speed").value),
+                pitch: Number($("pitch").value),
+              }),
+            })
+          ).json();
+          const deadline = Date.now() + 240000;
+          while (run === previewGeneration) {
+            task = await (await api("/tts/" + task.task_id)).json();
+            if (run !== previewGeneration) return;
+            if (task.status === "completed") {
+              const blob = await (
+                await api(task.audio_url.replace("/azure_api", ""))
+              ).blob();
+              if (run !== previewGeneration) return;
+              previewUrl = URL.createObjectURL(blob);
+              const audio = $("previewAudio");
+              audio.src = previewUrl;
+              audio.hidden = false;
+              $("previewStatus").textContent = "正在试听：" + voice.name;
+              try {
+                await audio.play();
+              } catch {
+                if (run === previewGeneration)
+                  $("previewStatus").textContent =
+                    "试听已就绪：" + voice.name + "，请点击播放。";
+              }
+              return;
+            }
+            if (task.status === "failed")
+              throw Error(task.error || "试听生成失败，请重试");
+            if (Date.now() >= deadline)
+              throw Error("试听生成仍在处理中，请稍后再次点击试听");
+            await new Promise((resolve) => setTimeout(resolve, 1200));
+          }
+        } catch (e) {
+          if (run === previewGeneration)
+            $("previewStatus").textContent = "试听失败：" + e.message;
         }
+      }
+      function renderPresets(
+        selected = $("presetSelect").value || preferences.default_preset_id,
+      ) {
+        const select = $("presetSelect");
+        select.replaceChildren(new Option("选择配置", ""));
+        for (const preset of preferences.presets || []) {
+          select.add(
+            new Option(
+              preset.name +
+                " · " +
+                (preset.provider === "azure" ? "Azure" : "MiniMax"),
+              preset.id,
+            ),
+          );
+        }
+        select.value = selected || "";
+        presetSelection();
+      }
+      function presetSelection() {
+        const preset = (preferences.presets || []).find(
+          (p) => p.id === $("presetSelect").value,
+        );
+        for (const id of ["restorePreset", "updatePreset", "deletePreset"])
+          $(id).disabled = !preset;
+        if (preset) $("presetName").value = preset.name;
+      }
+      $("presetSelect").onchange = presetSelection;
+      async function restorePreset(preset = preferences.preset) {
+        if (!preset) return;
         $("provider").value = preset.provider;
         const bound = preset.provider === "azure" ? 50 : 12;
         $("pitch").min = -bound;
@@ -1045,15 +1196,19 @@
           renderVoices();
           voiceInfo();
           $("presetStatus").textContent =
-            "已保存的音色被语言配置隐藏或暂不可用，请调整语言配置或重新选择。";
+            "配置已加载，但音色被语言配置隐藏或暂不可用，请调整语言配置或重新选择。";
         } else
-          $("presetStatus").textContent =
-            "已恢复默认音色、语速、音调及筛选条件";
+          $("presetStatus").textContent = "已加载音色、语速、音调及筛选条件";
       }
-      $("savePreset").onclick = async () => {
+      async function saveNamedPreset(update = false) {
         try {
           if (!$("voice").value) throw Error("请先选择音色");
+          const name = $("presetName").value.trim();
+          if (!name) throw Error("请填写配置名称");
+          if (update && !$("presetSelect").value)
+            throw Error("请选择要更新的配置");
           const preset = {
+            name,
             provider: $("provider").value,
             voice: $("voice").value,
             speed: Number($("speed").value),
@@ -1062,19 +1217,59 @@
               allFilters().map((s) => [s.dataset.key, s.value]),
             ),
           };
+          $("savePreset").disabled = true;
+          $("updatePreset").disabled = true;
           preferences = await (
-            await api("/preferences?provider=" + $("provider").value, {
-              method: "PUT",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ preset }),
+            await api(
+              "/presets" + (update ? "/" + $("presetSelect").value : ""),
+              {
+                method: update ? "PUT" : "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(preset),
+              },
+            )
+          ).json();
+          renderPresets(preferences.default_preset_id);
+          $("presetStatus").textContent =
+            "已保存「" + name + "」，下次打开自动使用";
+        } catch (e) {
+          error(e);
+        } finally {
+          $("savePreset").disabled = false;
+          presetSelection();
+        }
+      }
+      $("savePreset").onclick = () => saveNamedPreset();
+      $("updatePreset").onclick = () => saveNamedPreset(true);
+      $("restorePreset").onclick = async () => {
+        try {
+          if (!$("presetSelect").value) return;
+          preferences = await (
+            await api("/presets/" + $("presetSelect").value + "/load", {
+              method: "POST",
             })
           ).json();
-          $("presetStatus").textContent = "默认配置已保存，下次打开自动使用";
+          await restorePreset();
         } catch (e) {
           error(e);
         }
       };
-      $("restorePreset").onclick = restorePreset;
+      $("deletePreset").onclick = async () => {
+        try {
+          if (!$("presetSelect").value) return;
+          await api("/presets/" + $("presetSelect").value, {
+            method: "DELETE",
+          });
+          preferences = await (
+            await api("/preferences?provider=" + $("provider").value)
+          ).json();
+          $("presetName").value = "";
+          renderPresets("");
+          $("presetStatus").textContent = "所选配置已删除，当前合成参数保留";
+        } catch (e) {
+          error(e);
+        }
+      };
       (async () => {
         try {
           preferences = await (await api("/preferences")).json();

@@ -14,7 +14,8 @@ azure.push({...voice('British','en-GB','Female'),provider:'azure'}, {...voice('A
 // Even an incorrectly mixed response must not leak another platform's options.
 azure.push({...voice('MiniMax-only','en-CA','Male'),provider:'minimax'});
 const calls = [];
-let preferences={preset:null};
+let preferences={preset:null,presets:[],default_preset_id:null};
+let nextPreset=0;
 const languages={azure:['zh','en'],minimax:['zh']};
 azure.push({...voice('German multilingual','de-DE','Female'),primary_languages:['de-DE'],facets:{language:['de-DE','en-US','zh-CN'],role_type:['老年男声']}});
 minimax.forEach(v=>v.facets.role_type=['青年']);
@@ -25,14 +26,34 @@ const dom = new JSDOM(readFileSync(path.join(__dirname,'../webui/index.html'),'u
    calls.push({url,options});
    let body=[];
    if(url.includes('/preferences')){if(options?.method==='PUT') preferences={...preferences,...JSON.parse(options.body)};body={...preferences,languages:languages[new URL(url,'https://test').searchParams.get('provider')||'azure']};}
-   if(url.includes('/voices')){
+   if(url.includes('/presets')) {
+    const id=url.split('/')[3];
+    if(options.method==='POST' && !id) {
+      const preset={id:String(++nextPreset),...JSON.parse(options.body)};
+      preferences.presets.push(preset);preferences.preset=preset;preferences.default_preset_id=preset.id;
+    } else if(options.method==='PUT') {
+      const preset=preferences.presets.find(p=>p.id===id);Object.assign(preset,JSON.parse(options.body));preferences.preset=preset;preferences.default_preset_id=id;
+    } else if(options.method==='DELETE') {
+      preferences.presets=preferences.presets.filter(p=>p.id!==id);
+    } else if(url.endsWith('/load')) {
+      preferences.preset=preferences.presets.find(p=>p.id===id);preferences.default_preset_id=id;
+    }
+    body={...preferences,languages:languages[preferences.preset.provider]};
+   }
+   if(url.includes('/voices?')){
     const voices=url.includes('minimax')?minimax:azure,facets={};
     voices.forEach(v=>Object.entries(v.facets).forEach(([k,values])=>facets[k]=[...new Set([...(facets[k]||[]),...values])]));
     body={voices,facets};
    }
-   return {ok:true,json:async()=>body};
+   if(url.endsWith('/voices/preview'))body={task_id:'sample',status:'completed'};
+   if(url.endsWith('/tts/sample'))body={task_id:'sample',status:'completed',audio_url:'/azure_api/tts/audio/sample'};
+   return {ok:true,json:async()=>body,blob:async()=>new window.Blob(['audio'])};
   };
   window.URL.revokeObjectURL=()=>{};
+  window.URL.createObjectURL=()=> 'blob:sample';
+  window.HTMLMediaElement.prototype.pause=()=>{};
+  window.HTMLMediaElement.prototype.play=async()=>{};
+  window.HTMLElement.prototype.scrollIntoView=()=>{};
  }
 });
 const w=dom.window,d=w.document,$=id=>d.getElementById(id);
@@ -82,10 +103,22 @@ const settle=()=>new Promise(r=>setImmediate(r));
  $('submit').click();await settle();
  payload=JSON.parse(calls.filter(c=>c.options.method==='POST').at(-1).options.body);
  assert.equal(payload.minimax_pitch,3);assert.equal(payload.voice,'设计女声');
- $('savePreset').click();await settle();assert.equal(preferences.preset.voice,'设计女声');$('speed').value='0.5';await $('restorePreset').onclick();assert.equal($('speed').value,'1.4');assert.equal($('voice').value,'设计女声');
+ $('presetName').value='中文故事';$('savePreset').click();await settle();assert.equal(preferences.preset.voice,'设计女声');
+ const firstPreset=preferences.default_preset_id;
+ $('presetName').value='慢速故事';$('speed').value='0.8';await $('savePreset').onclick();
+ assert.equal(preferences.presets.length,2);assert.equal($('presetSelect').options.length,3);
+ $('presetSelect').value=firstPreset;$('presetSelect').dispatchEvent(new w.Event('change'));
+ await $('restorePreset').onclick();assert.equal($('speed').value,'1.4');
+ $('presetName').value='中文睡前故事';await $('updatePreset').onclick();assert.equal(preferences.presets[0].name,'中文睡前故事');
+ d.querySelector('.preview-button').click();await settle();
+ assert.equal($('previewAudio').src,'blob:sample');assert.equal($('previewAudio').hidden,false);
+ const preview=JSON.parse(calls.find(c=>c.url.endsWith('/voices/preview')).options.body);
+ assert.equal(preview.provider,'minimax');assert.equal(preview.voice,'设计女声');assert.equal(preview.pitch,3);assert.equal(preview.speed,1.4);
+ $('stopPreview').click();assert.equal($('previewPanel').hidden,true);
+$('speed').value='0.5';await $('restorePreset').onclick();assert.equal($('speed').value,'1.4');assert.equal($('voice').value,'设计女声');
  assert(calls.every(c=>c.url.startsWith('/workbench_api/')));
  assert(calls.every(c=>!c.options.headers.Authorization),'No browser token');
- const reopened=new JSDOM(readFileSync(path.join(__dirname,'../webui/index.html'),'utf8'),{url:'https://tools.exnihilo.site/tts/',runScripts:'dangerously',beforeParse(window){window.fetch=w.fetch;window.URL.revokeObjectURL=()=>{}}});
+ const reopened=new JSDOM(readFileSync(path.join(__dirname,'../webui/index.html'),'utf8'),{url:'https://tools.exnihilo.site/tts/',runScripts:'dangerously',beforeParse(window){window.fetch=w.fetch;window.URL.revokeObjectURL=()=>{};window.HTMLMediaElement.prototype.pause=()=>{}}});
  await settle();
  assert.equal(reopened.window.document.getElementById('provider').value,'minimax');
  assert.equal(reopened.window.document.getElementById('voice').value,'设计女声');

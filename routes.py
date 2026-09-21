@@ -83,19 +83,30 @@ def voices(request: Request, provider: Literal['azure', 'minimax'] = 'azure',
 
 @router.post('/tts', status_code=202)
 def create_tts_task(body: SynthesisRequest, client: str = Depends(authenticate)):
+    return enqueue_synthesis(body, client)
+
+def enqueue_synthesis(body, client, preview=False):
     if not (SPEECH_KEY if body.provider == 'azure' else MINIMAX_API_KEY):
         raise HTTPException(503, body.provider + ' is not configured')
-    limit_submission(client)
+    options = body.model_dump()
+    if preview:
+        options['preview'] = True
+    serialized = json.dumps(options, ensure_ascii=False, sort_keys=True)
     task_id = 'tts_' + uuid.uuid4().hex
     now = datetime.now(timezone.utc).isoformat()
     with get_db() as conn:
         conn.execute('BEGIN IMMEDIATE')
+        if preview:
+            cached = conn.execute("SELECT * FROM tasks WHERE owner=? AND options=? AND status IN ('pending','processing','completed') ORDER BY created_at DESC LIMIT 1", (client, serialized)).fetchone()
+            if cached and (cached['status'] != 'completed' or (cached['audio_file'] and (AUDIO_DIR / cached['audio_file']).is_file())):
+                return {'task_id': cached['task_id'], 'status': cached['status'], 'provider': body.provider}
+        limit_submission(client)
         count = conn.execute("SELECT count(*) FROM tasks WHERE status IN ('pending','processing')").fetchone()[0]
         if count >= MAX_PENDING:
             raise HTTPException(429, 'Task queue is full', headers={'Retry-After': '30'})
         conn.execute('INSERT INTO tasks (task_id,text,voice,rate,pitch,provider,owner,options,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)',
                      (task_id, body.text, body.voice, body.rate, body.pitch, body.provider, client,
-                      body.model_dump_json(), now, now))
+                      serialized, now, now))
         conn.commit()
     _queue.put(task_id)
     return {'task_id': task_id, 'status': 'pending', 'provider': body.provider,
@@ -104,7 +115,7 @@ def create_tts_task(body: SynthesisRequest, client: str = Depends(authenticate))
 @router.get('/tts')
 def list_tasks(limit: int = Query(50, ge=1, le=200), client: str = Depends(authenticate)):
     with get_db() as conn:
-        rows = conn.execute('SELECT * FROM tasks WHERE owner=? ORDER BY created_at DESC LIMIT ?', (client, limit)).fetchall()
+        rows = conn.execute("SELECT * FROM tasks WHERE owner=? AND COALESCE(json_extract(options, '$.preview'), 0)=0 ORDER BY created_at DESC LIMIT ?", (client, limit)).fetchall()
     return [present(dict(r)) for r in rows]
 
 @router.get('/tts/{task_id}')
@@ -185,10 +196,16 @@ def read_preferences(conn, client):
     per_provider = data.setdefault('provider_languages', {})
     for provider in ('azure', 'minimax'):
         per_provider.setdefault(provider, list(legacy))
+    if 'presets' not in data:
+        data['presets'] = []
+        data['default_preset_id'] = None
+        if data.get('preset'):
+            data['presets'].append({'id': 'legacy-default', 'name': '原默认配置', **data['preset']})
+            data['default_preset_id'] = 'legacy-default'
     return data
 
 def platform_preferences(data, provider):
-    return {'provider': provider, 'languages': data['provider_languages'][provider], 'preset': data.get('preset')}
+    return {'provider': provider, 'languages': data['provider_languages'][provider], 'preset': data.get('preset'), 'presets': data['presets'], 'default_preset_id': data.get('default_preset_id')}
 
 @router.get('/preferences')
 def get_preferences(provider: Literal['azure', 'minimax'] = 'azure', client: str = Depends(authenticate)):
@@ -209,3 +226,107 @@ def save_preferences(body: PreferencesUpdate, provider: Literal['azure', 'minima
                      (client, json.dumps(data, ensure_ascii=False)))
         conn.commit()
     return platform_preferences(data, provider)
+
+
+class NamedPreset(SavedPreset):
+    name: str = Field(min_length=1, max_length=60)
+
+    @model_validator(mode='after')
+    def trim_name(self):
+        self.name = self.name.strip()
+        if not self.name:
+            raise ValueError('A configuration name is required')
+        return self
+
+
+def persist_preferences(conn, client, data):
+    conn.execute('INSERT INTO preferences(owner,data) VALUES(?,?) ON CONFLICT(owner) DO UPDATE SET data=excluded.data',
+                 (client, json.dumps(data, ensure_ascii=False)))
+    conn.commit()
+
+
+def activate_preset(data, preset):
+    data['default_preset_id'] = preset['id']
+    data['preset'] = SavedPreset.model_validate(preset).model_dump()
+
+
+@router.post('/presets', status_code=201)
+def create_preset(body: NamedPreset, client: str = Depends(authenticate)):
+    with get_db() as conn:
+        conn.execute('BEGIN IMMEDIATE')
+        data = read_preferences(conn, client)
+        if len(data['presets']) >= 50:
+            raise HTTPException(422, 'At most 50 configurations can be saved')
+        preset = {'id': uuid.uuid4().hex, **body.model_dump()}
+        data['presets'].append(preset)
+        activate_preset(data, preset)
+        persist_preferences(conn, client, data)
+    return platform_preferences(data, body.provider)
+
+
+@router.put('/presets/{preset_id}')
+def update_preset(preset_id: str, body: NamedPreset, client: str = Depends(authenticate)):
+    with get_db() as conn:
+        conn.execute('BEGIN IMMEDIATE')
+        data = read_preferences(conn, client)
+        target = next((p for p in data['presets'] if p['id'] == preset_id), None)
+        if not target:
+            raise HTTPException(404, 'configuration not found')
+        target.update(body.model_dump())
+        activate_preset(data, target)
+        persist_preferences(conn, client, data)
+    return platform_preferences(data, body.provider)
+
+
+@router.post('/presets/{preset_id}/load')
+def load_preset(preset_id: str, client: str = Depends(authenticate)):
+    with get_db() as conn:
+        conn.execute('BEGIN IMMEDIATE')
+        data = read_preferences(conn, client)
+        preset = next((p for p in data['presets'] if p['id'] == preset_id), None)
+        if not preset:
+            raise HTTPException(404, 'configuration not found')
+        activate_preset(data, preset)
+        persist_preferences(conn, client, data)
+    return platform_preferences(data, preset['provider'])
+
+
+@router.delete('/presets/{preset_id}')
+def delete_preset(preset_id: str, client: str = Depends(authenticate)):
+    with get_db() as conn:
+        conn.execute('BEGIN IMMEDIATE')
+        data = read_preferences(conn, client)
+        if not any(p['id'] == preset_id for p in data['presets']):
+            raise HTTPException(404, 'configuration not found')
+        data['presets'] = [p for p in data['presets'] if p['id'] != preset_id]
+        if data.get('default_preset_id') == preset_id:
+            data['default_preset_id'] = None
+            data['preset'] = None
+        persist_preferences(conn, client, data)
+    return {'status': 'deleted'}
+
+
+class VoicePreviewRequest(BaseModel):
+    provider: Literal['azure', 'minimax']
+    voice: str = Field(min_length=1, max_length=200)
+    speed: float = Field(default=1, ge=0.5, le=2)
+    pitch: int = Field(default=0, ge=-50, le=50)
+
+
+@router.post('/voices/preview', status_code=202)
+def preview_voice(body: VoicePreviewRequest, client: str = Depends(authenticate)):
+    if body.provider == 'minimax' and not -12 <= body.pitch <= 12:
+        raise HTTPException(422, 'MiniMax pitch must be -12 to 12')
+    try:
+        voice = next((v for v in voice_catalog(body.provider) if v['id'] == body.voice), None)
+    except RuntimeError as exc:
+        raise HTTPException(502, str(exc)) from None
+    if voice is None:
+        raise HTTPException(404, 'voice not found in selected platform')
+    languages = voice.get('primary_languages', voice['facets'].get('language', []))
+    chinese = not languages or languages[0].lower().startswith('zh')
+    text = '你好，欢迎来到故事世界。今晚，让我们一起听一个温暖的故事。' if chinese else 'Hello, welcome to our story world. Tonight, let us share a warm and wonderful story.'
+    request = SynthesisRequest(text=text, provider=body.provider, voice=body.voice,
+        speed=body.speed, rate=f'{round((body.speed-1)*100)}%',
+        pitch=f'{body.pitch}Hz', minimax_pitch=body.pitch if body.provider == 'minimax' else 0)
+    return enqueue_synthesis(request, client, preview=True)
