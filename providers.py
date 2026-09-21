@@ -4,6 +4,7 @@ import threading
 import time
 import requests
 from voice_categories import with_categories
+from minimax_languages import resolve_languages
 from config import SPEECH_KEY, SPEECH_REGION, MINIMAX_API_KEY, MINIMAX_BASE_URL
 
 _cache = {}
@@ -55,14 +56,7 @@ def normalize(provider, raw, source='system'):
     # Expose transparent derived facets; retain descriptions and mark their origin.
     description = ' '.join(values(raw.get('description')))
     derived = {}
-    languages = {'zh-CN': ['普通话', 'Mandarin'], 'zh-HK': ['粤语', 'Cantonese'],
-        'en': ['英语', 'English'], 'ja': ['日语', 'Japanese'], 'ko': ['韩语', 'Korean'],
-        'fr': ['法语', 'French'], 'de': ['德语', 'German'], 'es': ['西班牙语', 'Spanish'],
-        'pt': ['葡萄牙语', 'Portuguese'], 'ru': ['俄语', 'Russian'], 'ar': ['阿拉伯语', 'Arabic'],
-        'it': ['意大利语', 'Italian'], 'hi': ['印地语', 'Hindi'], 'tr': ['土耳其语', 'Turkish'],
-        'vi': ['越南语', 'Vietnamese'], 'th': ['泰语', 'Thai'], 'id': ['印尼语', 'Indonesian']}
-    if not facets['language']:
-        derived['language'] = [key for key, names in languages.items() if any(n.casefold() in description.casefold() for n in names)]
+    facets['language'], language_source = resolve_languages(raw, source, facets['language'])
     if not facets['gender']:
         female = bool(re.search(r'女性|女声|女孩|御姐|大婶|少女|female|woman|girl', description, re.I))
         male = bool(re.search(r'男性|男声|男孩|少年|\bmale\b|\bman\b|\bboy\b', description, re.I))
@@ -74,7 +68,7 @@ def normalize(provider, raw, source='system'):
             facets[key] = value
     facets['classification'] = ['official_description_derived' if any(derived.values()) else 'official_fields']
     return with_categories({'id': raw['voice_id'], 'name': raw.get('voice_name') or raw['voice_id'],
-            'provider': provider, 'facets': facets, 'official': raw})
+            'provider': provider, 'facets': facets, 'official': raw, 'language_source': language_source})
 
 def voice_catalog(provider):
     with _lock:

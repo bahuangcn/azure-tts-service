@@ -202,3 +202,15 @@ PUT `/preferences?provider=azure|minimax` 只更新该平台的语言配置，�
 返回 `task_id` 后使用现有任务状态和音频下载接口播放，沿用鉴权、客户端隔离、队列上限和提交限流。
 同一客户端、音色和参数的待处理或已生成试听会复用，失败任务可重试，音频文件丢失时重新生成。
 试听任务不显示在普通故事合成列表中。
+
+
+### MiniMax 语言识别来源
+
+MiniMax `get_voice` 实际可能只返回 `voice_id`、`voice_name`、`description`、`created_time`，没有独立 `language`。
+语言归类优先使用明确语言字段，再使用 MiniMax 官方系统音色目录分类，最后匹配官方描述。
+英文音色描述中的美式、英式、澳大利亚、印度等明确口音分别保留为 `en-US`、`en-GB`、`en-AU`、`en-IN`；未注明地区的英语保留 `en`。
+`language_source` 记录字段、官方目录或描述的来源，原始返回保持在 `official`。
+自设计/克隆音色不会根据任意自定义 ID 推断语言，缺失信息仍标记未标注。
+分类规则只作用于接口实际返回的音色，不把文档中列出的其他音色直接添加为账号可用音色，也不改变 Azure 目录。
+
+参考：[官方系统音色表](https://platform.minimax.io/docs/faq/system-voice-id)、[MiniMax 官方音色参考](https://github.com/MiniMax-AI/skills/blob/main/skills/frontend-dev/references/minimax-voice-catalog.md)（2026-09-21 核对）。

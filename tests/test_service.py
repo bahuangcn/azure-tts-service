@@ -202,3 +202,32 @@ def test_preview_cache_parameters_and_isolation(monkeypatch):
         assert client.post('/azure_api/voices/preview',headers=a,json={**body,'speed':1.1}).json()['task_id']!=tid
     assert client.post('/azure_api/voices/preview',headers=a,json={'provider':'minimax','voice':'preview-zh','pitch':20}).status_code==422
     assert client.post('/azure_api/voices/preview',json={'provider':'azure','voice':'preview-en'}).status_code==401
+
+
+def test_minimax_languages_without_structured_fields():
+    cases=[
+        ('English_Trustworthy_Man','一位青年男性声音，带通用美式口音。','en-US'),
+        ('English_Graceful_Lady','带有经典的英式口音。','en-GB'),
+        ('English_Aussie_Bloke','带有独特的澳大利亚口音。','en-AU'),
+        ('English_Diligent_Man','带有印度口音。','en-IN'),
+        ('English_Whispering_girl','A gentle voice with an American accent.','en-US'),
+        ('Dutch_kindhearted_girl','一位少女荷兰语声音。','nl'),
+        ('Ukrainian_CalmWoman','一位宁静的乌克兰语声音。','uk'),
+        ('Chinese (Mandarin)_Southern_Young_Man','带有南方口音的中文。','zh-CN'),
+        ('Santa_Claus ','','en'),('male-qn-qingse-jingpin','','zh-CN'),
+    ]
+    for voice_id,description,language in cases:
+        raw={'voice_id':voice_id,'description':[description]}
+        normalized=normalize('minimax',raw)
+        assert normalized['primary_languages']==[language]
+        assert normalized['facets']['language']==[language]
+        assert normalized['official']==raw
+    assert normalize('minimax',{'voice_id':'French_NewVoice','language':'en-GB'})['primary_languages']==['en-GB']
+    assert normalize('minimax',{'voice_id':'custom','language':'English'},'designed')['primary_languages']==['en']
+    assert normalize('minimax',{'voice_id':'custom','language':'zh_HK'},'designed')['primary_languages']==['zh-HK']
+    # Unmarked designed voices are not assigned metadata from their chosen ID.
+    assert normalize('minimax',{'voice_id':'English_My_Custom'},'designed')['primary_languages']==[]
+    assert normalize('minimax',{'voice_id':'new','description':['温柔的印度口音']},'designed')['primary_languages']==[]
+    assert normalize('minimax',{'voice_id':'new','description':['中文粤语女声']},'designed')['primary_languages']==['zh-HK']
+    azure=normalize('azure',{'ShortName':'English_Test','Locale':'de-DE'})
+    assert azure['primary_languages']==['de-DE']
