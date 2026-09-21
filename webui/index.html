@@ -253,7 +253,12 @@
     <header>
       <h1>Story Voice <span style="font-weight: 400">/ 语音工作台</span></h1>
       <p>Azure & MiniMax · 音色探索 · 逐句时间轴与字幕</p>
-      <a href="languages.html" style="color: #fff">语言显示配置 →</a>
+      <a
+        id="languageSettings"
+        href="languages.html?provider=azure"
+        style="color: #fff"
+        >语言显示配置 →</a
+      >
     </header>
     <main>
       <section>
@@ -461,6 +466,7 @@
         SeniorMale: "老年男性",
       };
       function labelValue(key, value) {
+        if (value === "unknown") return "未标注语言";
         if (translated[value]) return translated[value];
         if (key === "language") {
           try {
@@ -481,6 +487,9 @@
       }
       async function loadVoices() {
         const generation = ++loading;
+        const provider = $("provider").value;
+        const platform = provider === "azure" ? "Azure Speech" : "MiniMax";
+        $("languageSettings").href = "languages.html?provider=" + provider;
         $("submit").disabled = true;
         catalog = [];
         $("voice").value = "";
@@ -493,25 +502,36 @@
           "音色…";
         $("count").textContent = "读取分类中…";
         try {
-          const data = await (
-            await api("/voices?provider=" + $("provider").value)
-          ).json();
+          const [data, config] = await Promise.all([
+            api("/voices?provider=" + provider).then((r) => r.json()),
+            api("/preferences?provider=" + provider).then((r) => r.json()),
+          ]);
           if (generation !== loading) return;
-          const allowed = new Set(preferences.languages);
+          preferences = config;
+          const allowed = new Set(config.languages);
           catalog = data.voices
-            .filter((v) => {
-              const languages = v.facets.language || [];
-              return languages.length
-                ? languages.some((l) => allowed.has(languageFamily(l)))
-                : allowed.has("unknown");
+            .filter((v) => v.provider === provider || !v.provider)
+            .map((v) => {
+              const primary =
+                v.primary_languages ??
+                (v.official?.Locale
+                  ? [v.official.Locale]
+                  : (v.facets.language || []).slice(0, 1));
+              const families = [...new Set(primary.map(languageFamily))];
+              return {
+                ...v,
+                facets: {
+                  ...v.facets,
+                  language: families.length ? families : ["unknown"],
+                },
+              };
             })
+            .filter((v) => v.facets.language.some((l) => allowed.has(l)))
             .map((v) => ({
               ...v,
               facets: {
                 ...v.facets,
-                language: (v.facets.language || []).filter((l) =>
-                  allowed.has(languageFamily(l)),
-                ),
+                language: v.facets.language.filter((l) => allowed.has(l)),
               },
             }));
           facetValues = {};
@@ -546,7 +566,9 @@
             select.id = "filter-" + key;
             label.htmlFor = select.id;
             label.textContent = labels[key] || key;
-            select.add(new Option("全部", ""));
+            select.add(
+              new Option(key === "language" ? "全部已启用语言" : "全部", ""),
+            );
             vals.forEach((v) => select.add(new Option(labelValue(key, v), v)));
             if (catalog.some((v) => !(v.facets[key] || []).length))
               select.add(new Option("未标注", "__unknown__"));
@@ -563,7 +585,18 @@
           $("moreFilters").hidden = !$("extraFacets").children.length;
           connected = true;
           $("connection").textContent =
-            "已自动连接 · " + catalog.length + " 个音色可用";
+            platform +
+            " · 已启用 " +
+            config.languages.filter((l) => l !== "unknown").length +
+            " 种语言 · " +
+            catalog.length +
+            " 个音色";
+          $("filter-language").previousElementSibling.textContent =
+            "语言（仅当前平台）";
+          $("filter-role_type").previousElementSibling.textContent =
+            "角色类型（" +
+            (provider === "azure" ? "Azure 角色" : "MiniMax 年龄") +
+            "）";
           if (restoring) {
             const preset = restoring;
             restoring = null;
@@ -603,10 +636,12 @@
             option.textContent =
               (option.value
                 ? labelValue(select.dataset.key, option.value)
-                : "全部") +
-              " (" +
+                : select.dataset.key === "language"
+                  ? "全部已启用语言"
+                  : "全部") +
+              " · " +
               count +
-              ")";
+              " 个音色";
             option.disabled =
               !!option.value && !count && option.value !== select.value;
           }
@@ -618,7 +653,13 @@
           $("voice").value = preferred?.id || "";
         }
         $("count").textContent =
-          filteredVoices.length + " / " + catalog.length + " 个音色";
+          "音色结果：" +
+          filteredVoices.length +
+          " / " +
+          catalog.length +
+          "（" +
+          ($("provider").value === "azure" ? "Azure Speech" : "MiniMax") +
+          "）";
         $("submit").disabled = !$("voice").value;
         renderVoices();
         voiceInfo();
@@ -920,7 +961,7 @@
             ),
           };
           preferences = await (
-            await api("/preferences", {
+            await api("/preferences?provider=" + $("provider").value, {
               method: "PUT",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ preset }),
@@ -971,6 +1012,26 @@
           $("submit").disabled = !$("voice").value;
         }
       };
+      window.addEventListener("pageshow", (event) => {
+        if (event.persisted) loadVoices();
+      });
+      window.addEventListener("focus", async () => {
+        if (!connected) return;
+        const provider = $("provider").value;
+        try {
+          const config = await (
+            await api("/preferences?provider=" + provider)
+          ).json();
+          if (
+            provider === $("provider").value &&
+            JSON.stringify(config.languages) !==
+              JSON.stringify(preferences.languages)
+          )
+            await loadVoices();
+        } catch (e) {
+          error(e);
+        }
+      });
       // Explicit refresh preserves playback; poll only while the user is not playing audio.
       setInterval(() => {
         if (connected) refresh();

@@ -148,7 +148,7 @@ TTS_FFMPEG="$(.venv/bin/python -c 'import imageio_ffmpeg; print(imageio_ffmpeg.g
 
 
 工作台支持自动加载、多维分类及音色卡片；各分类按其他已选条件显示可选数量。
-语言、角色类型、来源、风格显示在主筛选区；性别、年龄、角色归一到 role_type，其他官方标签位于“更多分类标签”。
+语言、角色类型、来源、风格显示在主筛选区；Azure 角色和 MiniMax 年龄分别映射到 role_type，其他官方标签位于“更多分类标签”。
 缺少元信息的音色归入“未标注”，仍可选择；工作台仅提供分类筛选，不显示名称搜索框。
 语速滑块范围 0.5–2×；Azure 音调滑块为 -50–50 Hz，MiniMax 为 -12–12 半音，切换平台重置音调。
 
@@ -162,12 +162,12 @@ NODE_PATH=/tmp/story-voice-ui-test/node_modules node tests/workbench.cjs
 
 ## 工作台语言与默认配置
 
-`/tts/languages.html` 为语言配置页，按语言族勾选两个平台目录中的全部语言，默认 `zh`、`en`。
-同一语言的地区版本一起启用；缺失语言信息的音色放在 `unknown`，需在页面显式勾选。
+`/tts/languages.html` 为语言配置页，先选择平台，再按语言族勾选该平台目录中的主语言；两个平台分别保存配置，默认 `zh`、`en`。
+同一语言的地区版本一起启用，多语言音色只按主语言归类（`primary_languages`），不会因附加语言混入；缺失语言信息的音色放在 `unknown`，需在页面显式勾选。
 此设置只控制工作台显示，不限制 Baby Story Creator 通过 API 使用其他语言音色。
 
-GET `/preferences` 返回当前客户端的 `languages`（语言族代码数组）和 `preset`（可为空）。
-PUT `/preferences` 支持只更新一个字段，未传入的字段保留，按客户端隔离并保存到 SQLite。
+GET `/preferences?provider=azure|minimax` 返回当前客户端、指定平台的 `languages`（语言族代码数组）和 `preset`（可为空）。
+PUT `/preferences?provider=azure|minimax` 只更新该平台的语言配置，默认平台为 Azure。未传字段保留，按客户端隔离并保存到 SQLite；`preset` 为含平台信息的全局默认配置。旧版共用语言配置自动迁移为两个平台各自的初始配置。
 
 ```json
 {"preset":{"provider":"azure","voice":"zh-CN-XiaochenNeural","speed":1,"pitch":0,"filters":{}}}
@@ -176,7 +176,7 @@ PUT `/preferences` 支持只更新一个字段，未传入的字段保留，按�
 工作台“保存为默认配置”保存当前引擎、音色、语速、音调和筛选条件；下次打开自动恢复。
 如音色已不可用或被语言配置隐藏，显示提示并要求重新选择，不自动换成另一音色合成。
 
-统一 `role_type` 示例：Azure `YoungAdultFemale` 和 MiniMax `age=青年,gender=Female` 均为“青年女声”；
+统一显示字段为 `role_type`，选项仅取当前平台：Azure `RolePlayList=YoungAdultFemale` 映射“青年女声”，MiniMax `age=青年` 映射“青年”，不拼接性别，也不混用另一平台字段。`role_type_source` 标明来源。Azure 未提供角色时显示“未标注”。
 `OlderAdult*` 映射中年，`Senior*` 映射老年，`Boy/Girl` 映射儿童，Narrator 映射旁白。
 原始官方数据保持在 `official`，不独立显示性别、年龄、角色筛选。
 

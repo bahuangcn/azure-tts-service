@@ -9,14 +9,14 @@ ROLE_TYPES = {
 
 def with_categories(voice):
     facets = voice['facets']
-    categories = {ROLE_TYPES.get(role, role) for role in facets.get('role', [])}
-    genders = {'Male': '男声', 'Female': '女声', 'Neutral': '中性声'}
-    age_tags = facets.get('age', [])
-    gender_tags = [genders[g] for g in facets.get('gender', []) if g in genders]
-    for age in age_tags:
-        for gender in gender_tags or ['（性别未标注）']:
-            categories.add(age + gender)
-    if not categories:
-        categories.update(g + '（年龄未标注）' for g in gender_tags)
-    facets['role_type'] = sorted(categories) or ['未标注']
+    # A shared display field, not a shared vocabulary or a synthesized persona.
+    if voice['provider'] == 'azure':
+        categories = [ROLE_TYPES.get(role, role) for role in facets.get('role', [])]
+        voice['role_type_source'] = 'RolePlayList'
+        voice['primary_languages'] = [voice['official']['Locale']] if voice['official'].get('Locale') else []
+    else:
+        categories = facets.get('age', [])
+        voice['role_type_source'] = 'age'
+        voice['primary_languages'] = facets.get('language', [])
+    facets['role_type'] = sorted(set(categories)) or ['未标注']
     return voice

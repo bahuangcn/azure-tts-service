@@ -7,14 +7,17 @@ const voice = (id, language, gender, source='system') => ({id,name:id,facets:{la
 const azure = [voice('zh-CN-XiaochenNeural','zh-CN','Female'),voice('中文男声','zh-CN','Male'),voice('English','en-US','Female'),voice('Japanese','ja-JP','Female')];
 const minimax = [voice('设计女声','zh-CN','Female','designed'),voice('官方男声','zh-CN','Male')];
 const calls = [];
-let preferences={languages:["zh","en"],preset:null};
+let preferences={preset:null};
+const languages={azure:['zh','en'],minimax:['zh']};
+azure.push({...voice('German multilingual','de-DE','Female'),primary_languages:['de-DE'],facets:{language:['de-DE','en-US','zh-CN'],role_type:['老年男声']}});
+minimax.forEach(v=>v.facets.role_type=['青年']);
 const dom = new JSDOM(readFileSync(path.join(__dirname,'../webui/index.html'),'utf8'),{
  url:'https://tools.exnihilo.site/tts/',runScripts:'dangerously',
  beforeParse(window){
   window.fetch=async(url,options)=>{
    calls.push({url,options});
    let body=[];
-   if(url.includes('/preferences')){if(options?.method==='PUT') preferences={...preferences,...JSON.parse(options.body)};body=preferences;}
+   if(url.includes('/preferences')){if(options?.method==='PUT') preferences={...preferences,...JSON.parse(options.body)};body={...preferences,languages:languages[new URL(url,'https://test').searchParams.get('provider')||'azure']};}
    if(url.includes('/voices')){
     const voices=url.includes('minimax')?minimax:azure,facets={};
     voices.forEach(v=>Object.entries(v.facets).forEach(([k,values])=>facets[k]=[...new Set([...(facets[k]||[]),...values])]));
@@ -31,10 +34,10 @@ const settle=()=>new Promise(r=>setImmediate(r));
  await settle();
  assert.equal($('filter-gender'),null);assert.equal($('filter-age'),null);assert.equal($('filter-role'),null);
  assert.equal($('token'),null,'No key prompt');
- assert.match($('connection').textContent,/已自动连接/);
+ assert.match($('connection').textContent,/Azure Speech · 已启用 2 种语言/);
  assert.equal(d.querySelectorAll('select[data-key]').length,4);
  assert.equal(d.querySelectorAll('.voice-option').length,3);
- $('filter-language').value='zh-CN';$('filter-language').dispatchEvent(new w.Event('change'));
+ $('filter-language').value='zh';$('filter-language').dispatchEvent(new w.Event('change'));
  $('filter-role_type').value='青年女声';$('filter-role_type').dispatchEvent(new w.Event('change'));
  assert.equal(d.querySelectorAll('.voice-option').length,1,'AND filters intersect');
  assert.match($('count').textContent,/1 \/ 3/);
@@ -46,6 +49,10 @@ const settle=()=>new Promise(r=>setImmediate(r));
  let payload=JSON.parse(calls.filter(c=>c.options.method==='POST').at(-1).options.body);
  assert.equal(payload.rate,'40%');assert.equal(payload.pitch,'20Hz');assert.equal(payload.minimax_pitch,0);
  $('provider').value='minimax';$('provider').dispatchEvent(new w.Event('change'));await settle();
+ assert.match($('connection').textContent,/MiniMax · 已启用 1 种语言/);
+ assert.deepEqual([...$('filter-role_type').options].map(o=>o.value),['','青年']);
+ assert.deepEqual([...$('filter-language').options].map(o=>o.value),['','zh']);
+ assert.equal($('languageSettings').getAttribute('href'),'languages.html?provider=minimax');
  assert.equal($('pitch').max,'12');assert.equal($('pitch').value,'0');
  $('filter-source').value='designed';$('filter-source').dispatchEvent(new w.Event('change'));
  assert.equal(d.querySelectorAll('.voice-option').length,1);

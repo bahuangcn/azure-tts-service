@@ -97,8 +97,14 @@
         勾选工作台需要显示的语言。默认仅中文、英文；同一语言下的地区、方言会一起启用。保存后返回工作台生效，配置保存在服务端。
       </p>
       <p>
-        列表汇总两个平台的全部可用语言。未提供语言信息的自设计音色等，归入“未标注语言”，可单独勾选显示。
+        先选择平台，列表只显示该平台音色的主语言；配置分别保存，互不影响。多语言音色按主语言归类，不因支持其他语言而混入。未提供语言信息的音色可勾选“未标注语言”。
       </p>
+      <label for="provider"
+        >平台<select id="provider">
+          <option value="azure">Azure Speech</option>
+          <option value="minimax">MiniMax</option>
+        </select></label
+      >
       <div class="actions">
         <button id="all" class="secondary">全选</button
         ><button id="none" class="secondary">全不选</button
@@ -113,8 +119,11 @@
       <p id="status" role="status"></p>
       <p id="error" role="alert"></p>
       <script>
-        const $ = (id) => document.getElementById(id);
-        const names = new Intl.DisplayNames(["zh-CN"], { type: "language" });
+        const $ = (id) => document.getElementById(id),
+          names = new Intl.DisplayNames(["zh-CN"], { type: "language" });
+        let generation = 0;
+        const requested = new URLSearchParams(location.search).get("provider");
+        $("provider").value = requested === "minimax" ? "minimax" : "azure";
         async function api(path, options = {}) {
           const r = await fetch("/workbench_api" + path, {
             credentials: "same-origin",
@@ -128,11 +137,12 @@
         }
         function count() {
           $("count").textContent =
-            "已选择 " +
+            ($("provider").value === "azure" ? "Azure Speech" : "MiniMax") +
+            "：已选 " +
             checks().filter((c) => c.checked).length +
             " / " +
             checks().length +
-            " 种语言";
+            " 个语言分类";
         }
         function choose(fn) {
           checks().forEach((c) => (c.checked = fn(c.value)));
@@ -142,10 +152,11 @@
         $("none").onclick = () => choose(() => false);
         $("default").onclick = () => choose((v) => ["zh", "en"].includes(v));
         $("save").onclick = async () => {
+          const provider = $("provider").value;
+          $("save").disabled = true;
+          $("provider").disabled = true;
           try {
-            $("save").disabled = true;
-            $("error").textContent = "";
-            await api("/preferences", {
+            await api("/preferences?provider=" + provider, {
               method: "PUT",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
@@ -155,28 +166,42 @@
               }),
             });
             $("status").textContent =
-              "已保存。返回工作台后会按新配置显示音色。";
+              (provider === "azure" ? "Azure Speech" : "MiniMax") +
+              "语言配置已保存，其他平台不变。返回工作台自动生效。";
           } catch (e) {
             $("error").textContent = e.message;
           } finally {
             $("save").disabled = false;
+            $("provider").disabled = false;
           }
         };
-        (async () => {
+        async function load() {
+          const run = ++generation,
+            provider = $("provider").value;
+          $("languages").replaceChildren();
+          $("save").disabled = true;
+          $("status").textContent = "";
+          $("error").textContent = "";
+          $("count").textContent = "正在加载当前平台的语言…";
           try {
-            const prefs = await api("/preferences");
-            const results = await Promise.allSettled(
-              ["azure", "minimax"].map((p) => api("/voices?provider=" + p)),
-            );
-            const codes = new Set(["zh", "en", "unknown", ...prefs.languages]);
-            let failures = 0;
-            for (const result of results) {
-              if (result.status === "rejected") {
-                failures++;
-                continue;
-              }
-              for (const code of result.value.facets.language || [])
-                codes.add(code.split(/[-_]/)[0].toLowerCase());
+            const [prefs, catalog] = await Promise.all([
+              api("/preferences?provider=" + provider),
+              api("/voices?provider=" + provider),
+            ]);
+            if (run !== generation) return;
+            const codes = new Set();
+            for (const voice of catalog.voices) {
+              if (voice.provider && voice.provider !== provider) continue;
+              const primary =
+                voice.primary_languages ??
+                (voice.official?.Locale
+                  ? [voice.official.Locale]
+                  : (voice.facets.language || []).slice(0, 1));
+              if (!primary.length) codes.add("unknown");
+              else
+                primary.forEach((code) =>
+                  codes.add(code.split(/[-_]/)[0].toLowerCase()),
+                );
             }
             for (const code of [...codes].sort((a, b) => {
               const rank = (v) =>
@@ -200,14 +225,12 @@
             }
             count();
             $("save").disabled = false;
-            if (failures)
-              $("error").textContent =
-                failures +
-                " 个平台的语言目录暂未加载成功，当前显示可读取的语言及已保存选项；请刷新重试以获取完整列表。";
           } catch (e) {
-            $("error").textContent = e.message;
+            if (run === generation) $("error").textContent = e.message;
           }
-        })();
+        }
+        $("provider").onchange = load;
+        load();
       </script>
     </main>
   </body>

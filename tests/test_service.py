@@ -114,7 +114,7 @@ def test_unified_role_categories():
     mini=normalize('minimax',{'voice_id':'b','gender':'Female','description':['一位青年女性声音，标准普通话。']})
     assert '青年女声' in azure['facets']['role_type']
     assert '老年女声' in azure['facets']['role_type']
-    assert mini['facets']['role_type']==['青年女声']
+    assert mini['facets']['role_type']==['青年']
     assert normalize('minimax',{'voice_id':'unknown'})['facets']['role_type']==['未标注']
 
 def test_preferences_persistence_and_isolation():
@@ -128,3 +128,16 @@ def test_preferences_persistence_and_isolation():
     assert client.put('/azure_api/preferences',headers=a,json={'preset':{**preset,'pitch':20}}).status_code==422
     assert client.put('/azure_api/preferences',headers=a,json={'languages':[]}).json()['languages']==[]
     assert client.put('/azure_api/preferences',headers=a,json={'languages':['bad-invalid']}).status_code==422
+
+def test_platform_languages_and_role_sources():
+    for provider, languages in [('azure',['en']),('minimax',['zh'])]:
+        response=client.put('/azure_api/preferences?provider='+provider,headers=a,json={'languages':languages})
+        assert response.status_code==200
+    assert client.get('/azure_api/preferences?provider=azure',headers=a).json()['languages']==['en']
+    mini=client.get('/azure_api/preferences?provider=minimax',headers=a).json()
+    assert mini['languages']==['zh'] and mini['preset']['voice']=='designed'
+    azure=normalize('azure',{'ShortName':'a','Locale':'de-DE','SecondaryLocaleList':['zh-CN','en-US'],'Gender':'Female'})
+    assert azure['primary_languages']==['de-DE']
+    assert azure['facets']['role_type']==['未标注']
+    assert azure['role_type_source']=='RolePlayList'
+    assert normalize('minimax',{'voice_id':'b','age':'青年','role':'Narrator'})['facets']['role_type']==['青年']

@@ -179,20 +179,33 @@ class PreferencesUpdate(BaseModel):
 
 def read_preferences(conn, client):
     row = conn.execute('SELECT data FROM preferences WHERE owner=?', (client,)).fetchone()
-    return {'languages': ['zh', 'en'], 'preset': None, **(json.loads(row['data']) if row else {})}
+    data = {'preset': None, **(json.loads(row['data']) if row else {})}
+    # Preserve an existing global selection as the initial value for each platform.
+    legacy = data.pop('languages', ['zh', 'en'])
+    per_provider = data.setdefault('provider_languages', {})
+    for provider in ('azure', 'minimax'):
+        per_provider.setdefault(provider, list(legacy))
+    return data
+
+def platform_preferences(data, provider):
+    return {'provider': provider, 'languages': data['provider_languages'][provider], 'preset': data.get('preset')}
 
 @router.get('/preferences')
-def get_preferences(client: str = Depends(authenticate)):
+def get_preferences(provider: Literal['azure', 'minimax'] = 'azure', client: str = Depends(authenticate)):
     with get_db() as conn:
-        return read_preferences(conn, client)
+        return platform_preferences(read_preferences(conn, client), provider)
 
 @router.put('/preferences')
-def save_preferences(body: PreferencesUpdate, client: str = Depends(authenticate)):
+def save_preferences(body: PreferencesUpdate, provider: Literal['azure', 'minimax'] = 'azure', client: str = Depends(authenticate)):
     with get_db() as conn:
         conn.execute('BEGIN IMMEDIATE')
         data = read_preferences(conn, client)
-        data.update(body.model_dump(exclude_unset=True))
+        changes = body.model_dump(exclude_unset=True)
+        if 'languages' in changes:
+            data['provider_languages'][provider] = changes['languages']
+        if 'preset' in changes:
+            data['preset'] = changes['preset']
         conn.execute('INSERT INTO preferences(owner,data) VALUES(?,?) ON CONFLICT(owner) DO UPDATE SET data=excluded.data',
                      (client, json.dumps(data, ensure_ascii=False)))
         conn.commit()
-    return data
+    return platform_preferences(data, provider)
