@@ -148,3 +148,51 @@ def delete_task(task_id: str, client: str = Depends(authenticate)):
         conn.execute('DELETE FROM tasks WHERE task_id=? AND owner=?', (task_id, client))
         conn.commit()
     return {'status': 'deleted'}
+
+
+class SavedPreset(BaseModel):
+    provider: Literal['azure', 'minimax']
+    voice: str = Field(min_length=1, max_length=200)
+    speed: float = Field(ge=0.5, le=2)
+    pitch: int = Field(ge=-50, le=50)
+    filters: dict[str, str] = Field(default_factory=dict, max_length=40)
+
+    @model_validator(mode='after')
+    def check_pitch(self):
+        if self.provider == 'minimax' and not -12 <= self.pitch <= 12:
+            raise ValueError('MiniMax pitch must be -12 to 12')
+        if any(len(k) > 100 or len(v) > 200 for k, v in self.filters.items()):
+            raise ValueError('Filter value too long')
+        return self
+
+class PreferencesUpdate(BaseModel):
+    languages: list[str] = Field(default_factory=lambda: ['zh', 'en'], max_length=300)
+    preset: SavedPreset | None = None
+
+    @model_validator(mode='after')
+    def check_languages(self):
+        import re
+        if any(not re.fullmatch(r'[a-z]{2,3}|unknown', value) for value in self.languages):
+            raise ValueError('Use language-family codes, such as zh or en')
+        self.languages = list(dict.fromkeys(self.languages))
+        return self
+
+def read_preferences(conn, client):
+    row = conn.execute('SELECT data FROM preferences WHERE owner=?', (client,)).fetchone()
+    return {'languages': ['zh', 'en'], 'preset': None, **(json.loads(row['data']) if row else {})}
+
+@router.get('/preferences')
+def get_preferences(client: str = Depends(authenticate)):
+    with get_db() as conn:
+        return read_preferences(conn, client)
+
+@router.put('/preferences')
+def save_preferences(body: PreferencesUpdate, client: str = Depends(authenticate)):
+    with get_db() as conn:
+        conn.execute('BEGIN IMMEDIATE')
+        data = read_preferences(conn, client)
+        data.update(body.model_dump(exclude_unset=True))
+        conn.execute('INSERT INTO preferences(owner,data) VALUES(?,?) ON CONFLICT(owner) DO UPDATE SET data=excluded.data',
+                     (client, json.dumps(data, ensure_ascii=False)))
+        conn.commit()
+    return data

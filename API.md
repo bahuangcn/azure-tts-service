@@ -148,7 +148,7 @@ TTS_FFMPEG="$(.venv/bin/python -c 'import imageio_ffmpeg; print(imageio_ffmpeg.g
 
 
 工作台支持自动加载、多维分类及音色卡片；各分类按其他已选条件显示可选数量。
-语言、性别、来源、风格、年龄、角色显示在主筛选区，其他官方标签位于“更多分类标签”。
+语言、角色类型、来源、风格显示在主筛选区；性别、年龄、角色归一到 role_type，其他官方标签位于“更多分类标签”。
 缺少元信息的音色归入“未标注”，仍可选择；搜索仅用于进一步查找名称。
 语速滑块范围 0.5–2×；Azure 音调滑块为 -50–50 Hz，MiniMax 为 -12–12 半音，切换平台重置音调。
 
@@ -158,3 +158,27 @@ TTS_FFMPEG="$(.venv/bin/python -c 'import imageio_ffmpeg; print(imageio_ffmpeg.g
 npm install --prefix /tmp/story-voice-ui-test --cache /tmp/story-voice-npm-cache jsdom
 NODE_PATH=/tmp/story-voice-ui-test/node_modules node tests/workbench.cjs
 ```
+
+
+## 工作台语言与默认配置
+
+`/tts/languages.html` 为语言配置页，按语言族勾选两个平台目录中的全部语言，默认 `zh`、`en`。
+同一语言的地区版本一起启用；缺失语言信息的音色放在 `unknown`，需在页面显式勾选。
+此设置只控制工作台显示，不限制 Baby Story Creator 通过 API 使用其他语言音色。
+
+GET `/preferences` 返回当前客户端的 `languages`（语言族代码数组）和 `preset`（可为空）。
+PUT `/preferences` 支持只更新一个字段，未传入的字段保留，按客户端隔离并保存到 SQLite。
+
+```json
+{"preset":{"provider":"azure","voice":"zh-CN-XiaochenNeural","speed":1,"pitch":0,"filters":{}}}
+```
+
+工作台“保存为默认配置”保存当前引擎、音色、语速、音调和筛选条件；下次打开自动恢复。
+如音色已不可用或被语言配置隐藏，显示提示并要求重新选择，不自动换成另一音色合成。
+
+统一 `role_type` 示例：Azure `YoungAdultFemale` 和 MiniMax `age=青年,gender=Female` 均为“青年女声”；
+`OlderAdult*` 映射中年，`Senior*` 映射老年，`Boy/Girl` 映射儿童，Narrator 映射旁白。
+原始官方数据保持在 `official`，不独立显示性别、年龄、角色筛选。
+
+轮询仅更新改变的任务，保留未变化记录的 DOM、展开状态和播放器，避免每五秒折叠时间轴。
+回归测试：`tests/timeline.cjs`（旧实现可复现折叠）、`tests/languages.cjs`、`tests/workbench.cjs`。

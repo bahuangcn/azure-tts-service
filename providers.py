@@ -3,6 +3,7 @@ import re
 import threading
 import time
 import requests
+from voice_categories import with_categories
 from config import SPEECH_KEY, SPEECH_REGION, MINIMAX_API_KEY, MINIMAX_BASE_URL
 
 _cache = {}
@@ -38,8 +39,8 @@ def normalize(provider, raw, source='system'):
             'status': values(raw.get('Status')), 'source': ['system']}
         for key, value in (raw.get('VoiceTag') or {}).items():
             facets[key] = values(value)
-        return {'id': raw['ShortName'], 'name': raw.get('LocalName') or raw['ShortName'],
-            'provider': provider, 'facets': facets, 'official': raw}
+        return with_categories({'id': raw['ShortName'], 'name': raw.get('LocalName') or raw['ShortName'],
+            'provider': provider, 'facets': facets, 'official': raw})
     facets = {'source': [source], 'language': values(raw.get('language')),
               'gender': values(raw.get('gender')), 'tag': values(raw.get('description'))}
     # Preserve all official tag fields rather than inventing demographics from IDs.
@@ -72,8 +73,8 @@ def normalize(provider, raw, source='system'):
         if value:
             facets[key] = value
     facets['classification'] = ['official_description_derived' if any(derived.values()) else 'official_fields']
-    return {'id': raw['voice_id'], 'name': raw.get('voice_name') or raw['voice_id'],
-            'provider': provider, 'facets': facets, 'official': raw}
+    return with_categories({'id': raw['voice_id'], 'name': raw.get('voice_name') or raw['voice_id'],
+            'provider': provider, 'facets': facets, 'official': raw})
 
 def voice_catalog(provider):
     with _lock:

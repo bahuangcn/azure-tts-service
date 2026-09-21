@@ -66,6 +66,8 @@ def init_db():
         except sqlite3.OperationalError:
             pass  # 列已存在
 
+    conn.execute("CREATE TABLE IF NOT EXISTS preferences (owner TEXT PRIMARY KEY, data TEXT NOT NULL)")
+
     # 存量数据回填：确保现有行 mode = 'sdk'
     conn.execute("UPDATE tasks SET mode = 'sdk' WHERE mode IS NULL")
     conn.commit()

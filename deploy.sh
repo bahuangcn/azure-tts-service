@@ -23,7 +23,7 @@ cd /opt/azure-tts-service
 venv/bin/pip install -q -r requirements.txt
 /usr/local/bin/ffmpeg -version >/dev/null
 venv/bin/python -m compileall -q . -x 'venv'
-install -m 644 webui/index.html /var/www/tools.exnihilo.site/tts/index.html
+install -m 644 webui/*.html /var/www/tools.exnihilo.site/tts/
 # New API alias on the same two existing hosts, without modifying their TLS policy.
 python3 - <<'PY'
 import json

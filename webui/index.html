@@ -253,6 +253,7 @@
     <header>
       <h1>Story Voice <span style="font-weight: 400">/ 语音工作台</span></h1>
       <p>Azure & MiniMax · 音色探索 · 逐句时间轴与字幕</p>
+      <a href="languages.html" style="color: #fff">语言显示配置 →</a>
     </header>
     <main>
       <section>
@@ -265,7 +266,7 @@
             <option value="minimax">MiniMax</option>
           </select>
           <p class="muted">
-            按语言、性别、来源和风格组合选择，筛选条件同时生效。
+            按语言、角色类型、来源和风格组合选择，筛选条件同时生效。
           </p>
           <div id="facets"></div>
           <details id="moreFilters">
@@ -349,6 +350,11 @@
             每句单独合成、测量后拼接；句间会保留停顿。最多 20,000 字、200
             句，每句最多 3,000 字。
           </p>
+          <div class="presets">
+            <button id="savePreset">保存为默认配置</button
+            ><button id="restorePreset">恢复默认配置</button>
+          </div>
+          <p id="presetStatus" class="muted" role="status"></p>
           <button id="submit" disabled>生成音频与字幕</button>
           <p id="error" class="error" role="alert"></p>
         </div>
@@ -372,6 +378,7 @@
       const labels = {
         language: "语言",
         age: "年龄",
+        role_type: "角色类型",
         ModelSeries: "模型系列",
         TailoredScenarios: "适用场景",
         Capabilities: "能力",
@@ -408,14 +415,10 @@
       function error(e) {
         $("error").textContent = e.message;
       }
-      const coreDimensions = [
-        "language",
-        "gender",
-        "source",
-        "style",
-        "age",
-        "role",
-      ];
+      const coreDimensions = ["language", "role_type", "source", "style"];
+      let preferences = { languages: ["zh", "en"], preset: null },
+        restoring = null;
+      const languageFamily = (value) => value.split(/[-_]/)[0].toLowerCase();
       let filteredVoices = [],
         visibleCount = 30,
         facetValues = {};
@@ -496,14 +499,43 @@
             await api("/voices?provider=" + $("provider").value)
           ).json();
           if (generation !== loading) return;
-          catalog = data.voices;
-          facetValues = data.facets;
+          const allowed = new Set(preferences.languages);
+          catalog = data.voices
+            .filter((v) => {
+              const languages = v.facets.language || [];
+              return languages.length
+                ? languages.some((l) => allowed.has(languageFamily(l)))
+                : allowed.has("unknown");
+            })
+            .map((v) => ({
+              ...v,
+              facets: {
+                ...v.facets,
+                language: (v.facets.language || []).filter((l) =>
+                  allowed.has(languageFamily(l)),
+                ),
+              },
+            }));
+          facetValues = {};
+          for (const v of catalog)
+            for (const [k, values] of Object.entries(v.facets))
+              facetValues[k] = [
+                ...new Set([...(facetValues[k] || []), ...values]),
+              ];
           const keys = [
             ...coreDimensions,
             ...Object.keys(facetValues).filter(
               (k) =>
                 !coreDimensions.includes(k) &&
-                !["tag", "classification"].includes(k),
+                ![
+                  "tag",
+                  "classification",
+                  "gender",
+                  "age",
+                  "role",
+                  "FemaleSpeakers",
+                  "MaleSpeakers",
+                ].includes(k),
             ),
           ];
           for (const key of keys) {
@@ -534,6 +566,18 @@
           connected = true;
           $("connection").textContent =
             "已自动连接 · " + catalog.length + " 个音色可用";
+          if (restoring) {
+            const preset = restoring;
+            restoring = null;
+            for (const select of allFilters())
+              if (
+                [...select.options].some(
+                  (o) => o.value === preset.filters?.[select.dataset.key],
+                )
+              )
+                select.value = preset.filters[select.dataset.key];
+            $("voice").value = preset.voice;
+          }
           filter();
         } catch (e) {
           if (generation !== loading) return;
@@ -602,7 +646,7 @@
             String(v.id === $("voice").value),
           );
           name.textContent = v.name;
-          badges.textContent = ["language", "gender", "source", "style"]
+          badges.textContent = ["language", "role_type", "source", "style"]
             .flatMap((k) =>
               (v.facets[k] || []).slice(0, 2).map((val) => labelValue(k, val)),
             )
@@ -670,18 +714,37 @@
           error(e);
         }
       }
+      let refreshing = false;
       async function refresh() {
-        if (!connected) return;
+        if (!connected || refreshing) return;
+        refreshing = true;
         try {
           const tasks = await (await api("/tts?limit=30")).json();
-          objectUrls.forEach(URL.revokeObjectURL);
-          objectUrls = [];
-          $("tasks").replaceChildren();
+          const existing = new Map(
+            [...$("tasks").querySelectorAll("article[data-task]")].map((el) => [
+              el.dataset.task,
+              el,
+            ]),
+          );
+          const ids = new Set(tasks.map((t) => t.task_id));
+          for (const [id, el] of existing)
+            if (!ids.has(id)) {
+              if (el.dataset.audioUrl) URL.revokeObjectURL(el.dataset.audioUrl);
+              el.remove();
+            }
           if (!tasks.length) $("tasks").textContent = "还没有合成记录。";
+          else if (!$("tasks").querySelector("article"))
+            $("tasks").replaceChildren();
           for (const t of tasks) {
+            const previous = existing.get(t.task_id),
+              signature = JSON.stringify(t);
+            if (previous?.dataset.signature === signature) continue;
+            const expanded = previous?.querySelector("details")?.open || false;
             const article = document.createElement("article"),
               h = document.createElement("h3"),
               meta = document.createElement("div");
+            article.dataset.task = t.task_id;
+            article.dataset.signature = signature;
             h.textContent = t.text.slice(0, 70);
             meta.textContent =
               t.provider +
@@ -730,7 +793,10 @@
                       await api(t.audio_url.replace("/azure_api", ""))
                     ).blob(),
                   );
-                  objectUrls.push(url);
+                  if (article.dataset.audioUrl)
+                    URL.revokeObjectURL(article.dataset.audioUrl);
+                  article.dataset.audioUrl = url;
+                  article.querySelector("audio")?.remove();
                   const audio = document.createElement("audio");
                   audio.controls = true;
                   audio.src = url;
@@ -753,6 +819,7 @@
                 null,
                 2,
               );
+              detail.open = expanded;
               detail.append(summary, pre);
               article.append(detail);
             }
@@ -771,10 +838,20 @@
               };
               article.append(del);
             }
-            $("tasks").append(article);
+            if (previous) previous.replaceWith(article);
+            else $("tasks").append(article);
           }
+          tasks.forEach((t, i) => {
+            const el = [...$("tasks").children].find(
+              (el) => el.dataset.task === t.task_id,
+            );
+            if (el && $("tasks").children[i] !== el)
+              $("tasks").insertBefore(el, $("tasks").children[i] || null);
+          });
         } catch (e) {
           error(e);
+        } finally {
+          refreshing = false;
         }
       }
       $("provider").onchange = () => {
@@ -819,7 +896,69 @@
           }),
       );
       updateParameters();
-      loadVoices().then(refresh);
+      async function restorePreset() {
+        const preset = preferences.preset;
+        if (!preset) {
+          $("presetStatus").textContent = "尚未保存默认配置";
+          return;
+        }
+        $("provider").value = preset.provider;
+        const bound = preset.provider === "azure" ? 50 : 12;
+        $("pitch").min = -bound;
+        $("pitch").max = bound;
+        $("pitch").value = preset.pitch;
+        $("speed").value = preset.speed;
+        $("search").value = "";
+        restoring = preset;
+        updateParameters();
+        await loadVoices();
+        if ($("voice").value !== preset.voice) {
+          $("voice").value = "";
+          $("submit").disabled = true;
+          renderVoices();
+          voiceInfo();
+          $("presetStatus").textContent =
+            "已保存的音色被语言配置隐藏或暂不可用，请调整语言配置或重新选择。";
+        } else
+          $("presetStatus").textContent =
+            "已恢复默认音色、语速、音调及筛选条件";
+      }
+      $("savePreset").onclick = async () => {
+        try {
+          if (!$("voice").value) throw Error("请先选择音色");
+          const preset = {
+            provider: $("provider").value,
+            voice: $("voice").value,
+            speed: Number($("speed").value),
+            pitch: Number($("pitch").value),
+            filters: Object.fromEntries(
+              allFilters().map((s) => [s.dataset.key, s.value]),
+            ),
+          };
+          preferences = await (
+            await api("/preferences", {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ preset }),
+            })
+          ).json();
+          $("presetStatus").textContent = "默认配置已保存，下次打开自动使用";
+        } catch (e) {
+          error(e);
+        }
+      };
+      $("restorePreset").onclick = restorePreset;
+      (async () => {
+        try {
+          preferences = await (await api("/preferences")).json();
+          if (preferences.preset) await restorePreset();
+          else await loadVoices();
+          await refresh();
+        } catch (e) {
+          error(e);
+          $("connection").textContent = "配置加载失败，请刷新重试";
+        }
+      })();
       $("refresh").onclick = refresh;
       $("submit").onclick = async () => {
         try {
@@ -850,7 +989,7 @@
       };
       // Explicit refresh preserves playback; poll only while the user is not playing audio.
       setInterval(() => {
-        if (connected && !document.querySelector("audio")) refresh();
+        if (connected) refresh();
       }, 5000);
     </script>
   </body>

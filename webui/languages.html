@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>语言显示配置 · Story Voice</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        font-family: system-ui, sans-serif;
+        color: #263544;
+        background: #f4f6f8;
+        margin: 0;
+      }
+      main {
+        max-width: 1000px;
+        margin: 32px auto;
+        padding: 24px;
+        background: white;
+        border-radius: 16px;
+      }
+      a {
+        color: #146c74;
+      }
+      h1 {
+        font-size: 24px;
+      }
+      p {
+        line-height: 1.7;
+        color: #637580;
+      }
+      button,
+      input {
+        font: inherit;
+      }
+      button {
+        padding: 10px 18px;
+        border: 0;
+        border-radius: 7px;
+        background: #146c74;
+        color: white;
+        cursor: pointer;
+      }
+      button:disabled {
+        opacity: 0.5;
+        cursor: wait;
+      }
+      .actions {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        margin: 24px 0;
+      }
+      .secondary {
+        background: #e7eff1;
+        color: #244b58;
+      }
+      #languages {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 10px;
+      }
+      label {
+        padding: 14px;
+        background: #f7fafb;
+        border: 1px solid #dce5e9;
+        border-radius: 8px;
+        display: flex;
+        gap: 12px;
+        align-items: center;
+      }
+      input {
+        accent-color: #146c74;
+        width: 20px;
+        height: 20px;
+      }
+      #status {
+        color: #146c74;
+      }
+      #error {
+        color: #b32c39;
+      }
+      small {
+        display: block;
+        color: #637580;
+        margin-top: 4px;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <a href="./">← 返回语音工作台</a>
+      <h1>语言显示配置</h1>
+      <p>
+        勾选工作台需要显示的语言。默认仅中文、英文；同一语言下的地区、方言会一起启用。保存后返回工作台生效，配置保存在服务端。
+      </p>
+      <p>
+        列表汇总两个平台的全部可用语言。未提供语言信息的自设计音色等，归入“未标注语言”，可单独勾选显示。
+      </p>
+      <div class="actions">
+        <button id="all" class="secondary">全选</button
+        ><button id="none" class="secondary">全不选</button
+        ><button id="default" class="secondary">仅中文和英文</button>
+      </div>
+      <p id="count" role="status">加载中…</p>
+      <div id="languages"></div>
+      <div class="actions">
+        <button id="save" disabled>保存语言配置</button
+        ><a href="./">返回工作台</a>
+      </div>
+      <p id="status" role="status"></p>
+      <p id="error" role="alert"></p>
+      <script>
+        const $ = (id) => document.getElementById(id);
+        const names = new Intl.DisplayNames(["zh-CN"], { type: "language" });
+        async function api(path, options = {}) {
+          const r = await fetch("/workbench_api" + path, {
+            credentials: "same-origin",
+            ...options,
+          });
+          if (!r.ok) throw Error("请求失败：HTTP " + r.status);
+          return r.json();
+        }
+        function checks() {
+          return [...document.querySelectorAll("#languages input")];
+        }
+        function count() {
+          $("count").textContent =
+            "已选择 " +
+            checks().filter((c) => c.checked).length +
+            " / " +
+            checks().length +
+            " 种语言";
+        }
+        function choose(fn) {
+          checks().forEach((c) => (c.checked = fn(c.value)));
+          count();
+        }
+        $("all").onclick = () => choose(() => true);
+        $("none").onclick = () => choose(() => false);
+        $("default").onclick = () => choose((v) => ["zh", "en"].includes(v));
+        $("save").onclick = async () => {
+          try {
+            $("save").disabled = true;
+            $("error").textContent = "";
+            await api("/preferences", {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                languages: checks()
+                  .filter((c) => c.checked)
+                  .map((c) => c.value),
+              }),
+            });
+            $("status").textContent =
+              "已保存。返回工作台后会按新配置显示音色。";
+          } catch (e) {
+            $("error").textContent = e.message;
+          } finally {
+            $("save").disabled = false;
+          }
+        };
+        (async () => {
+          try {
+            const prefs = await api("/preferences");
+            const results = await Promise.allSettled(
+              ["azure", "minimax"].map((p) => api("/voices?provider=" + p)),
+            );
+            const codes = new Set(["zh", "en", "unknown", ...prefs.languages]);
+            let failures = 0;
+            for (const result of results) {
+              if (result.status === "rejected") {
+                failures++;
+                continue;
+              }
+              for (const code of result.value.facets.language || [])
+                codes.add(code.split(/[-_]/)[0].toLowerCase());
+            }
+            for (const code of [...codes].sort((a, b) => {
+              const rank = (v) =>
+                v === "zh" ? 0 : v === "en" ? 1 : v === "unknown" ? 3 : 2;
+              return rank(a) - rank(b) || a.localeCompare(b);
+            })) {
+              const label = document.createElement("label"),
+                input = document.createElement("input"),
+                text = document.createElement("span"),
+                small = document.createElement("small");
+              input.type = "checkbox";
+              input.value = code;
+              input.checked = prefs.languages.includes(code);
+              input.onchange = count;
+              text.textContent =
+                code === "unknown" ? "未标注语言" : names.of(code);
+              small.textContent = code;
+              text.append(small);
+              label.append(input, text);
+              $("languages").append(label);
+            }
+            count();
+            $("save").disabled = false;
+            if (failures)
+              $("error").textContent =
+                failures +
+                " 个平台的语言目录暂未加载成功，当前显示可读取的语言及已保存选项；请刷新重试以获取完整列表。";
+          } catch (e) {
+            $("error").textContent = e.message;
+          }
+        })();
+      </script>
+    </main>
+  </body>
+</html>

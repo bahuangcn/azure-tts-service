@@ -108,3 +108,23 @@ def test_minimax_measured_audio(monkeypatch):
     assert d['total_ms']==400 and len(seen)==2
     assert d['word_timings']==[]
     assert d['metadata']['provider_segments'][0]['trace_id']=='test-trace'
+
+def test_unified_role_categories():
+    azure=normalize('azure',{'ShortName':'a','Gender':'Female','RolePlayList':['YoungAdultFemale','SeniorFemale']})
+    mini=normalize('minimax',{'voice_id':'b','gender':'Female','description':['一位青年女性声音，标准普通话。']})
+    assert '青年女声' in azure['facets']['role_type']
+    assert '老年女声' in azure['facets']['role_type']
+    assert mini['facets']['role_type']==['青年女声']
+    assert normalize('minimax',{'voice_id':'unknown'})['facets']['role_type']==['未标注']
+
+def test_preferences_persistence_and_isolation():
+    assert client.get('/azure_api/preferences').status_code==401
+    assert client.get('/azure_api/preferences',headers=a).json()['languages']==['zh','en']
+    preset={'provider':'minimax','voice':'designed','speed':0.8,'pitch':-3,'filters':{'source':'designed'}}
+    assert client.put('/azure_api/preferences',headers=a,json={'preset':preset}).status_code==200
+    assert client.put('/azure_api/preferences',headers=a,json={'languages':['zh','en','ja']}).json()['preset']==preset
+    assert client.get('/azure_api/preferences',headers=b).json()['preset'] is None
+    assert client.get('/azure_api/preferences',headers=a).json()['preset']==preset
+    assert client.put('/azure_api/preferences',headers=a,json={'preset':{**preset,'pitch':20}}).status_code==422
+    assert client.put('/azure_api/preferences',headers=a,json={'languages':[]}).json()['languages']==[]
+    assert client.put('/azure_api/preferences',headers=a,json={'languages':['bad-invalid']}).status_code==422
