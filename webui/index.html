@@ -480,8 +480,8 @@
             </div>
           </div>
           <p class="muted">
-            每句单独合成、测量后拼接；句间会保留停顿。最多 20,000 字、200
-            句，每句最多 3,000 字。
+            连续合成，保留上下文与自然语气；长文本才分块。句子时间轴使用平台返回的时间戳，正文最多
+            20,000 字。
           </p>
           <label for="presetSelect">已保存配置</label>
           <select id="presetSelect">
@@ -999,6 +999,13 @@
               article.append(p);
             }
             if (t.status === "completed") {
+              if (t.metadata?.timing_warnings?.length) {
+                const warning = document.createElement("p");
+                warning.className = "muted";
+                warning.textContent =
+                  "平台返回的时间轴不完整；已保留音频和可用时间戳，未估算缺失部分。";
+                article.append(warning);
+              }
               const actions = document.createElement("div");
               actions.className = "actions";
               for (const [name, path] of [

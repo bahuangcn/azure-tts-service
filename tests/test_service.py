@@ -27,7 +27,7 @@ def test_protection_and_ownership():
     assert client.get('/azure_api/tts',headers=b).json()==[]
 
 def test_validation():
-    for body in [{'text':' '},{'text':'x'*3001},{'text':'Hi','sentences':['different']},{'text':'Hi','speed':3},{'text':'Hi','rate':'\"/><audio src=\"evil'}]:
+    for body in [{'text':' '},{'text':'Hi','sentences':['different']},{'text':'Hi','speed':3},{'text':'Hi','rate':'\"/><audio src=\"evil'}]:
         assert client.post('/azure_api/tts',headers=a,json=body).status_code==422
 
 def test_catalog_filters(monkeypatch):
@@ -47,22 +47,26 @@ def test_subtitles():
     assert '00:00:01,234 --> 00:00:02,345' in subtitles(t,'srt')
     assert subtitles(t,'vtt').startswith('WEBVTT\n\n')
 
-def test_measured_synthesis(monkeypatch):
+def test_continuous_azure_native_timings(monkeypatch):
     import synthesis, wave
-    def fake(text,voice,rate,path,pitch):
+    def fake(text,voice,rate,path,pitch,sentence_events=None):
         with wave.open(path,'wb') as f:
             f.setparams((1,2,32000,0,'NONE','not compressed'))
             f.writeframes(b'\x00\x00'*3200)
-        return [{'text':text,'start_ms':0,'end_ms':100}],100
+        assert text=='你好。世界。'
+        sentence_events.extend([{'text':'你好。','start_ms':10,'end_ms':40},{'text':'世界。','start_ms':50,'end_ms':90}])
+        return [{'text':'你好。','start_ms':10,'end_ms':40},{'text':'世界。','start_ms':50,'end_ms':90}],100
     monkeypatch.setattr('worker._synth_one',fake)
     result=client.post('/azure_api/tts',headers=a,json={'text':'你好。世界。'})
     tid=result.json()['task_id']
     with get_db() as conn: task=dict(conn.execute('SELECT * FROM tasks WHERE task_id=?',(tid,)).fetchone())
     synthesis.synthesize_story(task)
     d=client.get('/azure_api/tts/'+tid,headers=a).json()
-    assert d['total_ms']==200
-    assert [s['duration_ms'] for s in d['sentence_timings']]==[100,100]
-    assert d['word_timings'][1]['start_ms']==100
+    assert d['total_ms']==100
+    assert d['metadata']['block_count']==1
+    assert d['metadata']['timing_source']=='provider_native'
+    assert [s['duration_ms'] for s in d['sentence_timings']]==[30,40]
+    assert d['word_timings'][1]['start_ms']==50
     assert client.get(d['audio_url'],headers=a).status_code==200
     assert client.get(d['subtitles']['vtt'],headers=a).text.startswith('WEBVTT')
 
@@ -96,8 +100,11 @@ def test_minimax_measured_audio(monkeypatch):
     seen=[]
     def fake(path,payload):
         seen.append(payload)
-        return {'data':{'audio':buf.getvalue().hex()},'trace_id':'test-trace','extra_info':{'usage_characters':2}}
+        return {'data':{'audio':buf.getvalue().hex(),'subtitle_file':'https://example.test/subtitles.json'},'trace_id':'test-trace','extra_info':{'usage_characters':2}}
     monkeypatch.setattr(synthesis,'minimax_post',fake)
+    monkeypatch.setattr(synthesis,'fetch_minimax_subtitles',lambda url:[{'text':'你好。世界。','time_begin':0,'time_end':190,
+        'timestamped_words':[{'word':'你好。','word_begin':0,'word_end':3,'time_begin':10,'time_end':70},
+                             {'word':'世界。','word_begin':3,'word_end':6,'time_begin':90,'time_end':180}]}])
     result=client.post('/azure_api/tts',headers=a,json={'text':'你好。世界。'})
     tid=result.json()['task_id']
     with get_db() as conn:
@@ -105,8 +112,11 @@ def test_minimax_measured_audio(monkeypatch):
         task=dict(conn.execute('SELECT * FROM tasks WHERE task_id=?',(tid,)).fetchone())
     synthesis.synthesize_story(task)
     d=client.get('/azure_api/tts/'+tid,headers=a).json()
-    assert d['total_ms']==400 and len(seen)==2
-    assert d['word_timings']==[]
+    assert d['total_ms']==200 and len(seen)==1
+    assert seen[0]['text']=='你好。世界。' and seen[0]['subtitle_enable'] is True
+    assert seen[0]['subtitle_type']=='word'
+    assert len(d['word_timings'])==2
+    assert [s['duration_ms'] for s in d['sentence_timings']]==[60,90]
     assert d['metadata']['provider_segments'][0]['trace_id']=='test-trace'
 
 def test_unified_role_categories():
@@ -231,3 +241,44 @@ def test_minimax_languages_without_structured_fields():
     assert normalize('minimax',{'voice_id':'new','description':['中文粤语女声']},'designed')['primary_languages']==['zh-HK']
     azure=normalize('azure',{'ShortName':'English_Test','Locale':'de-DE'})
     assert azure['primary_languages']==['de-DE']
+
+
+def test_long_text_validation_and_native_grouping():
+    from routes import SynthesisRequest
+    from synthesis import native_words_to_sentences
+    assert len(SynthesisRequest(text='好。'*300).text)==600
+    assert len(SynthesisRequest(text='好'*3500).text)==3500
+    assert native_words_to_sentences('Hello. Bye.',[
+        {'text':'Hello.','start_ms':35,'end_ms':330},
+        {'text':'Bye.','start_ms':520,'end_ms':800}])==[
+        {'text':'Hello.','start_ms':35,'end_ms':330},
+        {'text':'Bye.','start_ms':520,'end_ms':800}]
+    assert native_words_to_sentences('No matching words.',[])==[]
+
+
+def test_block_offsets_and_missing_native_timing(monkeypatch):
+    import synthesis, wave, json
+    seen=[]
+    def fake(text,voice,rate,path,pitch,sentence_events=None):
+        seen.append(text)
+        with wave.open(path,'wb') as f:
+            f.setparams((1,2,32000,0,'NONE','not compressed'))
+            f.writeframes(b'\x00\x00'*3200)
+        if text!='未提供时间轴。':
+            sentence_events.append({'text':text,'start_ms':10,'end_ms':80})
+        return [],100
+    monkeypatch.setattr('worker._synth_one',fake)
+    for text in ['好'*2999+'。\n第二段。','未提供时间轴。']:
+        tid=client.post('/azure_api/tts',headers=a,json={'text':text}).json()['task_id']
+        with get_db() as conn: task=dict(conn.execute('SELECT * FROM tasks WHERE task_id=?',(tid,)).fetchone())
+        synthesis.synthesize_story(task)
+        d=client.get('/azure_api/tts/'+tid,headers=a).json()
+        if text.startswith('好'):
+            assert ''.join(seen)==text
+            assert d['metadata']['block_count']==2
+            assert [s['start_ms'] for s in d['sentence_timings']]==[10,110]
+            assert [s['duration_ms'] for s in d['sentence_timings']]==[70,70]
+        else:
+            assert d['sentence_timings']==[]
+            assert d['metadata']['timing_warnings']
+            assert d['status']=='completed'

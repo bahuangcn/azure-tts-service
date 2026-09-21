@@ -24,15 +24,15 @@ class SynthesisRequest(BaseModel):
     speed: float = Field(default=1, ge=0.5, le=2)
     minimax_pitch: int = Field(default=0, ge=-12, le=12)
     model: Literal['speech-2.8-hd', 'speech-2.8-turbo', 'speech-2.6-hd', 'speech-2.6-turbo', 'speech-02-hd', 'speech-02-turbo'] | None = None
-    sentences: list[str] | None = Field(default=None, min_length=1, max_length=200)
+    sentences: list[str] | None = Field(default=None, min_length=1, max_length=2000)
 
     @model_validator(mode='after')
     def validate_segments(self):
         parts = self.sentences or split_sentences(self.text)
-        if not self.text.strip() or not parts or any(not p.strip() or len(p) > 3000 for p in parts):
-            raise ValueError('Text and sentences must be nonempty; each sentence must be at most 3000 characters')
-        if len(parts) > 200 or sum(map(len, parts)) > 20000:
-            raise ValueError('At most 200 sentences and 20000 characters are allowed')
+        if not self.text.strip() or not parts or any(not p.strip() for p in parts):
+            raise ValueError('Text and sentences must be nonempty')
+        if sum(map(len, parts)) > 20000:
+            raise ValueError('At most 20000 characters are allowed')
         if self.sentences and ''.join(self.text.split()) != ''.join(''.join(parts).split()):
             raise ValueError('sentences must reproduce text (ignoring whitespace)')
         return self

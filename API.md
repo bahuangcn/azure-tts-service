@@ -30,11 +30,11 @@
 
 - `provider`: `azure`（默认）或 `minimax`。请从音色目录选择对应 `voice`。
 - `sentences`: 可选，传入应用自己的断句结果以精确对应故事句子；忽略空白后必须与 text 一致。
-  省略时按中文/英文句末标点及换行切分；复杂缩写等建议显式传入。
-- 上限：20,000 字符、200 句、每句 3,000 字符。
+  仅用于原生词时间戳的句子归组，不决定合成请求如何分块；无法对应时保留平台原生分句并报告警告。
+- 总正文上限：20,000 字符；不再限制正文 200 句或单句 3,000 字。可选 `sentences` 最多 2,000 项。
 - Azure: `rate` 如 `+20%`、`-10%`；`pitch` 如 `+0Hz`、`-10Hz`。
 - MiniMax: `speed` 0.5–2；`minimax_pitch` -12–12；model 默认由服务配置。
-- 逐句合成再拼接，保留句间停顿；相比整篇合成，语气连贯性可能不同。
+- 连续合成原文，3,000 字符以内一次请求；长文本按自然边界打包分块，不逐句调用。3,000 为服务的单块运行限制，不是平台统一官方上限。
 
 完成结果包含原文、引擎、音色、状态、创建和更新时间，以及：
 
@@ -48,7 +48,7 @@
   ],
   "word_timings": [],
   "metadata": {
-    "timing_source": "measured_sentence_audio",
+    "timing_source": "provider_native",
     "sample_rate": 32000,
     "channels": 1,
     "format": "mp3",
@@ -59,10 +59,13 @@
 }
 ```
 
-时间均为毫秒，相对于完整音频。句子时长根据解码后的 PCM 样本数测量，包含该句首尾静音，
-不是字数估算，也不是精确的发音起止检测。统一编码为真实 MP3，避免分段 MP3 编码填充累积漂移。
-Azure 尽可能保留 SDK 词边界；部分音色可能不提供。MiniMax 本实现提供实测句级时间，
-`word_timings=[]`，不伪造词级时间；保留每句的 `trace_id` 和 `extra_info`（用量、音频参数等）。
+时间均为毫秒，相对于完整音频。Azure 开启 SDK 句子边界事件，使用平台提供的音频偏移和持续时间；
+缺少句级事件但存在词级数据时，按原文归组词级时间戳。MiniMax 开启 `subtitle_enable=true`、`subtitle_type=word`，
+下载并保留官方字幕 JSON，使用词时间戳归并句子。若只返回字幕段则保留原生段落边界，不伪造细分句子时间。
+`duration_ms = end_ms - start_ms`，不以逐句音频长度或字数估计。长文本仅测量合成块长度，用于拼接后偏移后续块时间轴。
+`metadata.synthesis_mode=continuous_blocks`，`block_count` 为合成请求块数，`timing_sources` 说明实际时间来源。
+`provider_segments` 保留每块原生字幕/句子事件、用量等。字幕缺失时保留音频和已有数据，并返回 `timing_warnings`，页面显示提醒。
+既有历史音频及时间轴保持原样，新任务使用此流程。
 
 ## 音色与多维过滤
 
@@ -219,3 +222,6 @@ MiniMax `get_voice` 实际可能只返回 `voice_id`、`voice_name`、`descripti
 试听交互：播放器在对应音色条目内部展开，条目右上角播放键可暂停/继续；暂停保留播放器和进度。
 关闭按钮停止播放并收起播放器；同一时间只播放一个试听。切换试听音色、切换平台或将正在试听的音色筛出结果时停止旧试听。
 选择音色或展开更多结果保留仍可见的播放器节点；关闭后的延迟合成结果不会重新打开播放器。
+
+
+原生时间信息参考：[Azure 合成边界事件](https://learn.microsoft.com/en-us/azure/ai-services/speech-service/how-to-speech-synthesis#subscribe-to-synthesizer-events)、[MiniMax 字幕参数](https://platform.minimax.io/docs/api-reference/speech-t2a-http)（2026-09-21 已用实际请求验证）。

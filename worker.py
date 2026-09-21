@@ -123,7 +123,7 @@ def _get_audio_duration(audio_path: str) -> int | None:
 
 
 # ── 单次合成 ───────────────────────────────────────────────────────────────
-def _synth_one(text: str, voice: str, rate: str, output_path: str, pitch: str = "+0Hz") -> tuple:
+def _synth_one(text: str, voice: str, rate: str, output_path: str, pitch: str = "+0Hz", sentence_events: list | None = None) -> tuple:
     """
     对单段文本执行一次 SDK 合成，返回 (word_timings, total_ms)。
 
@@ -150,6 +150,8 @@ def _synth_one(text: str, voice: str, rate: str, output_path: str, pitch: str = 
         speechsdk.SpeechSynthesisOutputFormat.Audio48Khz192KBitRateMonoMp3
     )
 
+    if sentence_events is not None:
+        speech_config.set_property(speechsdk.PropertyId.SpeechServiceResponse_RequestSentenceBoundary, 'true')
     audio_config = speechsdk.audio.AudioOutputConfig(filename=output_path)
     synthesizer = speechsdk.SpeechSynthesizer(
         speech_config=speech_config, audio_config=audio_config
@@ -179,6 +181,10 @@ def _synth_one(text: str, voice: str, rate: str, output_path: str, pitch: str = 
             duration_ms = 0
             log.warning(f"word_boundary duration 获取失败: {traceback.format_exc()}")
 
+        if sentence_events is not None and evt.boundary_type == speechsdk.SpeechSynthesisBoundaryType.Sentence:
+            sentence_events.append({'text': evt.text, 'start_ms': offset_ms,
+                                    'end_ms': offset_ms + duration_ms, 'duration_ms': duration_ms})
+            return
         timings.append({
             "text": evt.text,
             "offset_ms": offset_ms,
@@ -239,7 +245,9 @@ def _synth_one(text: str, voice: str, rate: str, output_path: str, pitch: str = 
     word_timings = []
     for i, t in enumerate(timings):
         start = int(t["offset_ms"])
-        if i + 1 < len(timings):
+        if sentence_events is not None:
+            end = start + int(t['duration_ms'])
+        elif i + 1 < len(timings):
             end = int(timings[i + 1]["offset_ms"])
         else:
             end = total_ms or start
