@@ -277,8 +277,6 @@
             <span id="count" role="status"></span
             ><button id="clearFilters" class="secondary">重置筛选</button>
           </div>
-          <label for="search">在筛选结果中查找名称（可选）</label>
-          <input id="search" placeholder="无需输入，直接从下方选择音色" />
           <div
             id="voiceList"
             class="voice-list"
@@ -588,22 +586,15 @@
         }
       }
       function filter() {
-        const q = $("search").value.trim().toLowerCase(),
-          filters = allFilters();
-        const searchMatch = (v) =>
-          !q || JSON.stringify(v).toLowerCase().includes(q);
-        filteredVoices = catalog.filter(
-          (v) =>
-            searchMatch(v) &&
-            filters.every((s) => matches(v, s.dataset.key, s.value)),
+        const filters = allFilters();
+        filteredVoices = catalog.filter((v) =>
+          filters.every((s) => matches(v, s.dataset.key, s.value)),
         );
         for (const select of filters) {
-          const others = catalog.filter(
-            (v) =>
-              searchMatch(v) &&
-              filters.every(
-                (s) => s === select || matches(v, s.dataset.key, s.value),
-              ),
+          const others = catalog.filter((v) =>
+            filters.every(
+              (s) => s === select || matches(v, s.dataset.key, s.value),
+            ),
           );
           for (const option of select.options) {
             const count = others.filter((v) =>
@@ -860,18 +851,12 @@
         $("pitch").min = -bound;
         $("pitch").max = bound;
         $("pitch").value = 0;
-        $("search").value = "";
         visibleCount = 30;
         updateParameters();
         loadVoices();
       };
-      $("search").oninput = () => {
-        visibleCount = 30;
-        filter();
-      };
       $("clearFilters").onclick = () => {
         allFilters().forEach((s) => (s.value = ""));
-        $("search").value = "";
         visibleCount = 30;
         filter();
       };
@@ -908,7 +893,6 @@
         $("pitch").max = bound;
         $("pitch").value = preset.pitch;
         $("speed").value = preset.speed;
-        $("search").value = "";
         restoring = preset;
         updateParameters();
         await loadVoices();
